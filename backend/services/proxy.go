@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -123,12 +125,54 @@ func (s *PoolKeyState) markExhausted() {
 	s.TotalExhausted++
 }
 
-func (s *PoolKeyState) markRateLimited() {
+func (s *PoolKeyState) markRateLimited(detail string) {
+	cooldown := time.Duration(rateLimitCooldownSec) * time.Second
+	// 服务端有时返回 "Resets in: 16m0s" / "Resets in: 1h2m" → 用真实时长
+	// 钳位 60s..30min，避免极端值
+	if d := parseResetsIn(detail); d > 0 {
+		if d < 60*time.Second {
+			d = 60 * time.Second
+		}
+		if d > 30*time.Minute {
+			d = 30 * time.Minute
+		}
+		cooldown = d
+	}
 	s.Healthy = false
 	s.Disabled = false
 	s.RuntimeExhausted = false
-	s.CooldownUntil = time.Now().Add(rateLimitCooldownSec * time.Second)
+	s.CooldownUntil = time.Now().Add(cooldown)
 	s.ConsecutiveErrs = 0
+}
+
+// parseResetsIn 从错误详情解析 "Resets in: 1h2m3s"（h/m/s 任意组合）。
+var resetsInRE = regexp.MustCompile(`(?i)resets in:?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?`)
+
+func parseResetsIn(detail string) time.Duration {
+	if detail == "" {
+		return 0
+	}
+	m := resetsInRE.FindStringSubmatch(detail)
+	if len(m) < 4 || (m[1] == "" && m[2] == "" && m[3] == "") {
+		return 0
+	}
+	var dur time.Duration
+	if m[1] != "" {
+		if v, err := strconv.Atoi(m[1]); err == nil {
+			dur += time.Duration(v) * time.Hour
+		}
+	}
+	if m[2] != "" {
+		if v, err := strconv.Atoi(m[2]); err == nil {
+			dur += time.Duration(v) * time.Minute
+		}
+	}
+	if m[3] != "" {
+		if v, err := strconv.Atoi(m[3]); err == nil {
+			dur += time.Duration(v) * time.Second
+		}
+	}
+	return dur
 }
 
 func (s *PoolKeyState) markDisabled() {
@@ -250,6 +294,11 @@ type MitmProxy struct {
 	// 检测到 "global rate limit for trial users" 时设置退避截止时间，
 	// 退避期间 key 选择自动跳过 Trial/Free key，优先使用 Pro/Team key。
 	globalTrialRateLimitUntil time.Time
+
+	// ── 限速轮转 debounce ──
+	// 上一次因 rate limit 触发轮转的时间；短时间内并发命中限速只切一次号，
+	// 避免连锁烧 key。受 mu 保护。
+	lastRateLimitRotateAt time.Time
 }
 
 var injectCodeiumConfigFn = InjectCodeiumConfig
@@ -486,26 +535,40 @@ func (p *MitmProxy) disableKeyAndRotate(usedKey, detail string) string {
 	return ""
 }
 
+// rotateDebounceWindow 限速/轮转 debounce 窗口：短时间内多次命中限速只切一次号，
+// 避免并发请求同时返回 rate limit 时连锁烧 key。
+const rotateDebounceWindow = 3 * time.Second
+
 func (p *MitmProxy) markRateLimitedAndRotate(usedKey, detail string) string {
 	p.recordUpstreamFailure(upstreamFailureRateLimit, detail, usedKey)
 	// ★ 限速：短冷却 + 切号重试（限速是 per-key 的，换号能绕过）
 	p.mu.Lock()
 	if state := p.keyStates[usedKey]; state != nil {
-		state.markRateLimited()
+		state.markRateLimited(detail)
 	}
-	rotatedKey := p.rotateKey()
+	// ★ Debounce：短时间内已轮转过则不再轮转（pool currentIdx 不再震荡）
+	skipRotate := time.Since(p.lastRateLimitRotateAt) < rotateDebounceWindow
+	var rotatedKey string
+	if !skipRotate {
+		rotatedKey = p.rotateKey()
+		p.lastRateLimitRotateAt = time.Now()
+	}
 	poolSize := len(p.poolKeys)
 	p.mu.Unlock()
 	if rotatedKey != "" && rotatedKey != strings.TrimSpace(usedKey) {
-		p.log("★ 限速轮转: %s... → %s... (pool=%d, cooldown=%ds)",
+		p.log("★ 限速轮转: %s... → %s... (pool=%d)",
 			usedKey[:minStr(12, len(usedKey))],
 			rotatedKey[:minStr(12, len(rotatedKey))],
-			poolSize, rateLimitCooldownSec)
+			poolSize)
 		p.syncCurrentAPIKeyToClient(rotatedKey, MitmCurrentKeyChangeReasonRateLimitRotate)
 		// ★ 不迁移已有会话：保持会话粘性，避免 Invalid Cascade session
 		return rotatedKey
 	}
-	p.log("★ 限速但无可轮转 key，透传给 IDE (pool=%d): %s...", poolSize, usedKey[:minStr(12, len(usedKey))])
+	if skipRotate {
+		p.log("★ 限速 debounce 跳过轮转 (key 已冷却): %s...", usedKey[:minStr(12, len(usedKey))])
+	} else {
+		p.log("★ 限速但无可轮转 key，透传给 IDE (pool=%d): %s...", poolSize, usedKey[:minStr(12, len(usedKey))])
+	}
 	return ""
 }
 
@@ -1037,11 +1100,10 @@ func (p *MitmProxy) Status() MitmProxyStatus {
 				}
 			}
 			if fullKey != "" {
-				cnt := p.sessionBindingCount(fullKey)
-				status.PoolStatus[i].BoundSessionCount = cnt
-				if cnt > 0 {
-					status.PoolStatus[i].IsCurrent = true
-				}
+				// ★ BoundSessionCount 反映该 key 上有多少活跃会话绑定（"在用" 状态）
+				// IsCurrent 只表示 pool currentIdx 当前指向的 key（前端"当前活跃"语义），
+				// 不要因为 key 上有会话就强行标 IsCurrent，否则前端"当前活跃"会被夸大成全池。
+				status.PoolStatus[i].BoundSessionCount = p.sessionBindingCount(fullKey)
 			}
 		}
 	}
@@ -1331,20 +1393,23 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 				return resp, nil
 			}
 		} else if isRateLimited {
-			rt.proxy.markRateLimitedAndRotate(usedKey, detail)
+			// ★ 限速：标记冷却+轮转 pool currentIdx，永远透传错误给 IDE（不在响应内重试）
+			//   - 用户希望先看到错误再切号，避免连锁切号烧 key
+			//   - markRateLimitedAndRotate 内部 debounce，多并发命中只切一次
+			//   - 已绑定 convID 的会话保持粘性（避免 Invalid Cascade session）
+			//   - IDE 重试时新请求会用新 key
+			if rotatedKey := rt.proxy.markRateLimitedAndRotate(usedKey, detail); rotatedKey != "" {
+				rt.proxy.log("★ Rate limit→轮转: %s... → %s... (透传给IDE)",
+					usedKey[:minStr(12, len(usedKey))],
+					rotatedKey[:minStr(12, len(rotatedKey))])
+			} else {
+				rt.proxy.log("★ Rate limit 已冷却 key=%s... (透传给IDE)", usedKey[:minStr(12, len(usedKey))])
+			}
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+			return resp, nil
 		} else {
 			// ★ 额度耗尽，切号
 			rt.proxy.markRuntimeExhaustedAndRotate(usedKey, detail)
-		}
-
-		// ★ 有 convID 的已存在对话 + 限速冷却：不切号重试（保持粘性）
-		// 限速冷却是暂时的，120s 后自动恢复；切号会导致 Invalid Cascade session
-		if convID != "" && isRateLimited {
-			rt.proxy.log("已有对话 %s... 的 key %s... 限速冷却，保持粘性透传给 IDE",
-				convID[:minStr(8, len(convID))],
-				usedKey[:minStr(12, len(usedKey))])
-			resp.Body = io.NopCloser(bytes.NewReader(respBody))
-			return resp, nil
 		}
 		// ★ 有 convID + 额度耗尽：尝试用新 key 重试（key 不会自动恢复，必须迁移）
 		// pickPoolKeyForSession 会检测到 RuntimeExhausted 并分配新 key
@@ -2324,14 +2389,17 @@ func (p *MitmProxy) pickPoolKeyForSession(convID string, excludeKeys ...string) 
 			p.mu.RLock()
 			state := p.keyStates[binding.PoolKey]
 			available := state != nil && state.isAvailable()
-			// ★ 会话粘性保护（仅限速冷却）：
-			// 限速冷却中保持粘性 — 迁移后新号没有该 conversation 的 Cascade session。
-			// ★ 额度耗尽(RuntimeExhausted) 不保持粘性 — key 不会自动恢复，
-			// 必须迁移到新 key（虽然可能 Invalid Cascade session，但总比永远卡死好）。
+			// ★ 会话粘性保护（仅限速短冷却）：
+			// 限速冷却 ≤ 60s：保持粘性，等冷却结束（迁移会触发 Invalid Cascade session）。
+			// 限速冷却 > 60s：迁移到新 key——服务端"Resets in: 16m / 30m"长冷却时，
+			//   继续粘连只会让用户连续踩限速；接受一次 Cascade session 重建代价更优。
+			// ★ 额度耗尽(RuntimeExhausted) 不保持粘性 — key 不会自动恢复，必须迁移。
 			stickyOverride := false
 			if !available && state != nil && !state.Disabled && !state.RuntimeExhausted {
-				// 仅限速冷却中保持粘性
-				stickyOverride = true
+				cooldownLeft := time.Until(state.CooldownUntil)
+				if cooldownLeft > 0 && cooldownLeft <= 60*time.Second {
+					stickyOverride = true
+				}
 			}
 			p.mu.RUnlock()
 

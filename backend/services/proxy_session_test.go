@@ -140,23 +140,45 @@ func TestPickPoolKeyForSession_ExhaustedMigrates(t *testing.T) {
 	}
 }
 
-func TestPickPoolKeyForSession_RateLimitedKeepSticky(t *testing.T) {
+func TestPickPoolKeyForSession_RateLimitedShortCooldownKeepSticky(t *testing.T) {
 	p := newTestProxy([]string{"key-a", "key-b"})
 
 	// Bind conv-1 to key-a
 	key1, _ := p.pickPoolKeyForSession("conv-1")
 
-	// Mark key-a as rate-limited (cooldown) → should keep sticky
+	// 限速短冷却 (≤60s) → 保持粘性，避免 Invalid Cascade session
 	p.mu.Lock()
-	p.keyStates[key1].markRateLimited()
+	p.keyStates[key1].Healthy = false
+	p.keyStates[key1].CooldownUntil = time.Now().Add(30 * time.Second)
 	p.mu.Unlock()
 
 	key2, jwt2 := p.pickPoolKeyForSession("conv-1")
 	if key2 != key1 {
-		t.Errorf("expected sticky to %q (rate-limited), got migrated to %q", key1, key2)
+		t.Errorf("expected sticky to %q (short cooldown), got migrated to %q", key1, key2)
 	}
 	if len(jwt2) == 0 {
 		t.Error("expected non-empty jwt with sticky override for rate-limited key")
+	}
+}
+
+func TestPickPoolKeyForSession_RateLimitedLongCooldownMigrates(t *testing.T) {
+	p := newTestProxy([]string{"key-a", "key-b"})
+
+	// Bind conv-1 to key-a
+	key1, _ := p.pickPoolKeyForSession("conv-1")
+
+	// 限速长冷却 (>60s, 服务端 Resets in: 16m+) → 迁移到新 key
+	// 继续粘连只会让用户连续踩限速；接受 Cascade session 重建代价更优
+	p.mu.Lock()
+	p.keyStates[key1].markRateLimited("Resets in: 16m0s")
+	p.mu.Unlock()
+
+	key2, jwt2 := p.pickPoolKeyForSession("conv-1")
+	if key2 == key1 {
+		t.Errorf("expected migration from %q (long cooldown), but stayed sticky", key1)
+	}
+	if len(jwt2) == 0 {
+		t.Error("expected non-empty jwt after migration")
 	}
 }
 

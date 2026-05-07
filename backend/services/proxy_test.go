@@ -1539,7 +1539,9 @@ func TestRetryTransportPermissionDeniedWireErrorRotatesToNextKeyBeforeRefreshing
 	}
 }
 
-func TestRetryTransportRateLimitRotatesToNextKeyAndRetries(t *testing.T) {
+// 限速时不再响应内重试 — 透传错误给 IDE，让用户先看到错误，然后下次请求自动用新 key。
+// 旧行为(响应内换号重试)会导致 IDE 看到串号产生的 Invalid Cascade session 错误。
+func TestRetryTransportRateLimitPassThroughAndRotates(t *testing.T) {
 	originalGetJWT := getJWTByAPIKeyFn
 	originalInject := injectCodeiumConfigFn
 	t.Cleanup(func() {
@@ -1587,11 +1589,11 @@ func TestRetryTransportRateLimitRotatesToNextKeyAndRetries(t *testing.T) {
 	if resp == nil {
 		t.Fatal("RoundTrip() response is nil")
 	}
-	// 限速时切号重试，应调用2次（首次 + 1次重试）
-	if calls != 2 {
-		t.Fatalf("RoundTrip() calls = %d, want 2 (retry with rotated key on rate limit)", calls)
+	// 限速时透传错误（不响应内重试），只调用 1 次
+	if calls != 1 {
+		t.Fatalf("RoundTrip() calls = %d, want 1 (rate limit passes through to IDE)", calls)
 	}
-	// 应轮转到 sk-ws-b
+	// 应轮转 pool currentIdx 到 sk-ws-b（下次请求用新 key）
 	if got := proxy.CurrentAPIKey(); got != "sk-ws-b" {
 		t.Fatalf("CurrentAPIKey() = %q, want %q (should rotate on rate limit)", got, "sk-ws-b")
 	}
