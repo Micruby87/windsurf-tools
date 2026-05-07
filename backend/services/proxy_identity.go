@@ -431,20 +431,32 @@ func replaceMetadataFields(metaBytes []byte, newKey []byte, newJWT []byte, rando
 		}
 	}
 
+	// ★ 当 newKey 是 devin-session-token$<旧JWT> 形式时，用刚刷出来的 newJWT
+	// 重组成 devin-session-token$<新JWT>，避免 F3 / F21 / Authorization 三处的
+	// JWT 不一致 —— 上游有时按 F3 内 JWT 验证，stale 时返回 "Model provider
+	// unreachable"。
+	freshNewKey := newKey
+	if len(newJWT) > 0 && bytes.HasPrefix(newKey, []byte("devin-session-token$")) {
+		freshNewKey = append([]byte("devin-session-token$"), newJWT...)
+	}
+
 	modified := false
 	var newFields []protoFieldRaw
 	for _, f := range fields {
 		if f.WireType == 2 {
 			if bytes.HasPrefix(f.Bytes, apiKeyPrefix) {
-				newFields = append(newFields, protoFieldRaw{FieldNum: f.FieldNum, WireType: 2, Bytes: newKey})
+				newFields = append(newFields, protoFieldRaw{FieldNum: f.FieldNum, WireType: 2, Bytes: freshNewKey})
 				modified = true
 				continue
 			}
 			// ★ F3 = devin-session-token$<JWT>（IDE 登录后真实用这个做 auth）
-			// 必须替换为号池 sk-ws-* key，否则 F3 仍是用户自己的会话 token，
-			// 上游会按 F3 里的 session → 原用户账号去计费 Opus 等 premium 模型。
+			// 必须替换为号池 sk-ws-* key 或 devin-session-token$<新鲜JWT>。
+			// 注意：用 freshNewKey 而非 newKey ——
+			// pool 里存的 devin-session-token 内嵌的是导入时的旧 JWT，会过期；
+			// 必须用刚 mint 的 newJWT 重组，否则 F3 / F21 / Authorization 三者的
+			// JWT 不一致，上游间歇性返回 "Model provider unreachable"。
 			if f.FieldNum == 3 && bytes.HasPrefix(f.Bytes, []byte("devin-session-token$")) {
-				newFields = append(newFields, protoFieldRaw{FieldNum: 3, WireType: 2, Bytes: newKey})
+				newFields = append(newFields, protoFieldRaw{FieldNum: 3, WireType: 2, Bytes: freshNewKey})
 				modified = true
 				continue
 			}
