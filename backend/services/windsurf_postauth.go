@@ -30,6 +30,9 @@ func (s *WindsurfService) WindsurfPostAuth(authToken string) (*WindsurfPostAuthR
 	req.Header.Set("Origin", "https://windsurf.com")
 	req.Header.Set("Referer", "https://windsurf.com/account/login")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
+	// ★ 服务器强制要求通过此 header 传 auth1 token（前端 createDevinAuth1TokenInterceptor 行为一致）。
+	// 仅放进 proto body 会被拒：401 missing required header: X-Devin-Auth1-Token。
+	req.Header.Set("X-Devin-Auth1-Token", authToken)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
