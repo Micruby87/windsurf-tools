@@ -487,6 +487,41 @@ func TestIsPersistentJWTAccessDeniedDetailTreatsDevinTokenInvalidAsPersistent(t 
 	}
 }
 
+func TestHashPoolKeyDistinguishesDevinSessionTokenAccountsSharingPrefix(t *testing.T) {
+	// 这是"全部账号显示当前活跃"那个 bug 的核心回归测试：
+	// devin-session-token$<JWT> 类账号都共享 "devin-session-to" 前缀，
+	// KeyShort 截 16 字符会全部撞车；HashPoolKey 必须对每个不同的 full key
+	// 返回不同的指纹，否则 App 层填 Email/Nickname 时会随机命中错的账号。
+	keys := []string{
+		"devin-session-token$eyJhbGciOiJIUzI1NiJ9.aaaaa",
+		"devin-session-token$eyJhbGciOiJIUzI1NiJ9.bbbbb",
+		"devin-session-token$eyJhbGciOiJIUzI1NiJ9.ccccc",
+		"devin-session-token$eyJhbGciOiJIUzI1NiJ9.aaaaaXTRA",
+		"sk-ws-aaaaaaaa",
+		"sk-ws-bbbbbbbb",
+	}
+	seen := make(map[string]string, len(keys))
+	for _, k := range keys {
+		h := HashPoolKey(k)
+		if len(h) != 12 {
+			t.Errorf("HashPoolKey(%q) length = %d, want 12", k, len(h))
+		}
+		if prev, ok := seen[h]; ok {
+			t.Errorf("HashPoolKey 撞车: %q 与 %q 都得到 %s", prev, k, h)
+		}
+		seen[h] = k
+	}
+
+	// 同一个 key 必须得到同样的 hash（稳定）
+	if HashPoolKey("sk-ws-stable") != HashPoolKey("sk-ws-stable") {
+		t.Fatal("HashPoolKey 不稳定")
+	}
+	// 前后空白被 trim
+	if HashPoolKey("  sk-ws-trim  ") != HashPoolKey("sk-ws-trim") {
+		t.Fatal("HashPoolKey 没有 trim 空白")
+	}
+}
+
 func TestMayHaveConversationIDIsTheSingleIdentityInjectionGate(t *testing.T) {
 	// mayHaveConversationID == true  → 注入号池身份（聊天计费 / 会话生命周期）
 	injectPaths := []string{

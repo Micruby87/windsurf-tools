@@ -2,8 +2,10 @@ package services
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -347,7 +349,12 @@ type MitmProxyStatus struct {
 }
 
 type PoolKeyInfo struct {
-	KeyShort          string `json:"key_short"`
+	KeyShort string `json:"key_short"`
+	// KeyHash 是 full api_key 的稳定唯一指纹（sha256 前 12 个 hex 字符）。
+	// 用于 App 层 / 前端把 PoolKeyInfo 精确对回 Account；之前用 KeyShort
+	// 做前缀匹配，对 devin-session-token$<JWT> 这种共享前缀的 key 完全失效，
+	// 导致所有账号被误标"当前活跃"。永远不要把 KeyShort 当唯一 ID 用。
+	KeyHash           string `json:"key_hash"`
 	Plan              string `json:"plan"`
 	Healthy           bool   `json:"healthy"`
 	Disabled          bool   `json:"disabled"`
@@ -362,6 +369,14 @@ type PoolKeyInfo struct {
 	// App 层填充（MitmProxy 本身不知道账号信息）
 	Email    string `json:"email,omitempty"`
 	Nickname string `json:"nickname,omitempty"`
+}
+
+// HashPoolKey 返回 api_key 的稳定唯一指纹（sha256 前 12 hex），供 App / 前端
+// 精确匹配 PoolKeyInfo ↔ Account 使用。devin-session-token$<JWT> 这类账号
+// 用 KeyShort 前缀匹配会全部撞车，这个 hash 不会。
+func HashPoolKey(apiKey string) string {
+	h := sha256.Sum256([]byte(strings.TrimSpace(apiKey)))
+	return hex.EncodeToString(h[:6]) // 12 hex chars
 }
 
 type MitmProxyEvent struct {
@@ -1083,6 +1098,7 @@ func (p *MitmProxy) Status() MitmProxyStatus {
 
 		info := PoolKeyInfo{
 			KeyShort:         short,
+			KeyHash:          HashPoolKey(k),
 			Plan:             state.Plan,
 			Healthy:          state.Healthy,
 			Disabled:         state.Disabled,

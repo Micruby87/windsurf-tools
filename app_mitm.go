@@ -129,30 +129,29 @@ func (a *App) SwitchMitmToAccount(id string) (string, error) {
 
 // GetMitmProxyStatus returns the current proxy status.
 // 在 MitmProxy.Status() 基础上，用号池账号信息填充 PoolKeyInfo 的 Email/Nickname。
+//
+// ★ 必须用 KeyHash 严格匹配，不能再用 KeyShort 前缀。
+// 历史 bug：KeyShort 取 full key 前 16 字符，对 devin-session-token$<JWT> 这种
+// 共享 "devin-session-to" 前缀的账号会全部撞车 → Go map 随机迭代取首个匹配 →
+// 所有账号都被贴上同一个 pool 入口的 Email/IsCurrent → 前端显示 "全部账号都
+// 当前活跃"。
 func (a *App) GetMitmProxyStatus() services.MitmProxyStatus {
 	st := a.mitmProxy.Status()
 	if len(st.PoolStatus) > 0 && a.store != nil {
 		accounts := a.store.GetAllAccounts()
-		keyToAccount := make(map[string]models.Account, len(accounts))
+		// 按 KeyHash 索引（与 PoolKeyInfo.KeyHash 同一函数生成）
+		hashToAccount := make(map[string]models.Account, len(accounts))
 		for _, acc := range accounts {
 			k := strings.TrimSpace(acc.WindsurfAPIKey)
-			if k != "" {
-				keyToAccount[k] = acc
+			if k == "" {
+				continue
 			}
+			hashToAccount[services.HashPoolKey(k)] = acc
 		}
 		for i := range st.PoolStatus {
-			short := st.PoolStatus[i].KeyShort
-			// 遍历匹配（KeyShort 是截断后的前缀 + "..."）
-			for fullKey, acc := range keyToAccount {
-				prefix := short
-				if strings.HasSuffix(prefix, "...") {
-					prefix = prefix[:len(prefix)-3]
-				}
-				if strings.HasPrefix(fullKey, prefix) {
-					st.PoolStatus[i].Email = acc.Email
-					st.PoolStatus[i].Nickname = acc.Nickname
-					break
-				}
+			if acc, ok := hashToAccount[st.PoolStatus[i].KeyHash]; ok {
+				st.PoolStatus[i].Email = acc.Email
+				st.PoolStatus[i].Nickname = acc.Nickname
 			}
 		}
 	}

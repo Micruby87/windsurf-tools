@@ -141,9 +141,15 @@ const persistLocalSettings = async () => {
     saveState.value = "saved";
     showSaved.value = true;
     resetSavedStateLater();
+    // ★ Clash 轮换是 settings 副作用启停的（applyClashRotatorSettings），
+    //   保存完后必须重新查 running 状态，否则 toggle 已开但徽章一直显示"已停止"。
+    void fetchClashStatus().finally(() => {
+      clashSyncing.value = false;
+    });
   } catch (e) {
     saveState.value = "error";
     showToast(`自动保存失败: ${String(e)}`, "error");
+    clashSyncing.value = false;
   } finally {
     isSaving.value = false;
   }
@@ -214,11 +220,23 @@ const relaySectionRefreshing = computed(
 
 // ── Clash IP 轮换 ──
 const clashRunning = ref(false);
+const clashSyncing = ref(false); // toggle 切到新值但 auto-save 还没落库时的过渡态
 const clashLoading = ref(false);
 const clashTestResult = ref<string>("");
 const clashTestOk = ref(false);
 const clashNodes = ref<string[]>([]);
 const clashNodesLoading = ref(false);
+
+// 监听 toggle 变化（用户主动切换时）→ 立刻进入 "同步中" 过渡态，
+// 避免出现"toggle 已开 + 徽章仍显示已停止"的视觉冲突。
+watch(
+  () => local.clash_rotate_enabled,
+  (next, prev) => {
+    if (isSyncingLocal.value) return; // 来自 settingsStore 的同步赋值，不是用户操作
+    if (next === prev) return;
+    clashSyncing.value = true;
+  },
+);
 
 const fetchClashStatus = async () => {
   try {
@@ -603,12 +621,22 @@ onUnmounted(() => {
                   <span
                     class="rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide"
                     :class="
-                      clashRunning
-                        ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                        : 'bg-slate-500/10 text-slate-700 dark:text-slate-300'
+                      clashSyncing
+                        ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                        : clashRunning
+                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          : 'bg-slate-500/10 text-slate-700 dark:text-slate-300'
                     "
                   >
-                    {{ clashRunning ? "运行中" : "已停止" }}
+                    {{
+                      clashSyncing
+                        ? local.clash_rotate_enabled
+                          ? "启动中…"
+                          : "停止中…"
+                        : clashRunning
+                          ? "运行中"
+                          : "已停止"
+                    }}
                   </span>
                 </div>
                 <div

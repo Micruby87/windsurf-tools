@@ -516,18 +516,22 @@ function findMitmPoolRuntime(acc: models.Account) {
   if (!key) {
     return null;
   }
+  // ★ 不能用 key_short 做前缀匹配 —— devin-session-token$<JWT> 这类账号
+  // 共享 "devin-session-to" 前缀，前缀 startsWith 会让所有账号都命中第一条
+  // pool_status，进而都被标 "当前活跃"。
+  // 主匹配走 email（后端 GetMitmProxyStatus 已用 KeyHash 严格填充），
+  // 缺 email 时退回 KeyShort 全等匹配（仅对 sk-ws-* 短 key 安全）。
   return (
     mitmStore.status?.pool_status?.find((item) => {
-      const itemEmail = String(item.email || "")
-        .trim()
-        .toLowerCase();
-      if (email && itemEmail && email === itemEmail) {
-        return true;
+      const itemEmail = String(item.email || "").trim().toLowerCase();
+      if (email && itemEmail) {
+        return email === itemEmail;
       }
-      const short = String(item.key_short || "")
-        .trim()
-        .replace(/\.\.\.$/, "");
-      return short && key.startsWith(short);
+      // email 缺失时的兜底：要求 key_short（去掉省略号）与原 key 完全相等
+      // —— 仅 sk-ws-* 等不会被截断的短 key 满足。devin-session-token$ 这种
+      // 一定会被截断成 16 字符，全等条件不成立，会被自然排除。
+      const short = String(item.key_short || "").trim();
+      return short && short === key;
     }) ?? null
   );
 }

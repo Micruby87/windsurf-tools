@@ -398,6 +398,7 @@ export namespace services {
 	}
 	export class PoolKeyInfo {
 	    key_short: string;
+	    key_hash: string;
 	    plan: string;
 	    healthy: boolean;
 	    disabled: boolean;
@@ -419,6 +420,7 @@ export namespace services {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.key_short = source["key_short"];
+	        this.key_hash = source["key_hash"];
 	        this.plan = source["plan"];
 	        this.healthy = source["healthy"];
 	        this.disabled = source["disabled"];
