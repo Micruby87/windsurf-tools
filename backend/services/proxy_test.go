@@ -487,6 +487,36 @@ func TestIsPersistentJWTAccessDeniedDetailTreatsDevinTokenInvalidAsPersistent(t 
 	}
 }
 
+func TestIsLoginOrAuthBootstrapPathClassifiesAuthPbPaths(t *testing.T) {
+	// 必须透传：IDE 用自己的凭据兑换 JWT 的入口，替换身份会导致 "Invalid token"。
+	authPaths := []string{
+		"/exa.auth_pb.AuthService/GetUserJwt",
+		"/exa.auth_pb.AuthService/RegisterUser",
+		"/exa.auth_pb.AuthService/LoginPasswordless",
+		"/exa.auth_pb.AuthService/Login",
+		"/_backend/exa.auth_pb.AuthService/GetUserJwt",
+	}
+	for _, p := range authPaths {
+		if !isLoginOrAuthBootstrapPath(p) {
+			t.Errorf("isLoginOrAuthBootstrapPath(%q) = false, want true", p)
+		}
+	}
+
+	// 不应被误判为登录路径：聊天/身份/座席类路径正常走号池替换。
+	nonAuth := []string{
+		"/exa.api_server_pb.ApiServerService/GetChatMessage",
+		"/exa.seat_management_pb.SeatManagementService/GetUserStatus",
+		"/exa.seat_management_pb.SeatManagementService/GetPlanStatus",
+		"/exa.cortex_pb.CortexService/CreateConversation",
+		"/exa.trajectory_pb.TrajectoryService/RecordTrajectoryStep",
+	}
+	for _, p := range nonAuth {
+		if isLoginOrAuthBootstrapPath(p) {
+			t.Errorf("isLoginOrAuthBootstrapPath(%q) = true, want false", p)
+		}
+	}
+}
+
 func TestIsPersistentJWTAccessDeniedDetailTreatsLogOutHintAsPersistent(t *testing.T) {
 	detail := `code=unauthenticated msg=try logging out and logging in again`
 	if !isPersistentJWTAccessDeniedDetail(detail) {

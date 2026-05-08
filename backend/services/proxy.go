@@ -1593,6 +1593,21 @@ func (p *MitmProxy) handleRequest(req *http.Request, origHost string) {
 		return
 	}
 
+	// ★ 登录/认证 bootstrap 路径必须 100% 透传 IDE 真实凭据 ──
+	//   /exa.auth_pb.AuthService/* (GetUserJwt / RegisterUser / Login*)
+	//   是 IDE 把自身 api_key 或 session_token 兑换成 JWT 的入口；
+	//   一旦在这里替换成号池身份，IDE 的 body 里仍是它自己的 token，
+	//   而 Authorization 是号池 JWT，上游会回:
+	//     "failed to validate Devin token: Invalid token"
+	//   导致 IDE 永远登不上。
+	//   注意：proxy 自己 prefetch 号池 JWT 走 WindsurfService.GetJWTByAPIKey，
+	//   直连 ResolveUpstreamIP，不经过 MITM listener，所以这里透传不会
+	//   影响号池 JWT 拉取流程。
+	if isLoginOrAuthBootstrapPath(path) {
+		p.log("登录/认证路径透传(保留IDE凭据): %s", pathTail)
+		return
+	}
+
 	// ★ 身份请求 (GetUserStatus/Ping/GetProfileData/...) 不需要解析 conv_id 路由，
 	// 但 Authorization 头 + body 内身份字段都必须替换为号池 key/JWT；
 	// 仅替换 Authorization 会导致上游回:
@@ -2221,6 +2236,18 @@ func mayHaveConversationID(path string) bool {
 	return isChatPath(path) ||
 		strings.Contains(path, "Cortex") ||
 		strings.Contains(path, "Trajectory")
+}
+
+// isLoginOrAuthBootstrapPath returns true for paths used by the IDE to exchange
+// its own credentials for a session JWT. These MUST pass through unmodified —
+// replacing identity here would break IDE login because the IDE is authenticating
+// itself, not consuming a pool key.
+//
+// Currently covers /exa.auth_pb.AuthService/* (GetUserJwt, RegisterUser, Login*).
+// 注意：proxy 自身预取号池 JWT 走 WindsurfService.GetJWTByAPIKey，直连
+// ResolveUpstreamIP() 不经过 MITM，所以这里透传不影响号池流程。
+func isLoginOrAuthBootstrapPath(path string) bool {
+	return strings.Contains(path, "auth_pb.AuthService/")
 }
 
 // sessionBindingCount returns how many active sessions are bound to the given key.
