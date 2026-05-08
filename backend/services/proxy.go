@@ -1544,14 +1544,39 @@ func (p *MitmProxy) handleRequest(req *http.Request, origHost string) {
 		return
 	}
 
-	// ★ 身份请求 (GetUserStatus/Ping/GetProfileData/...) 不需要解析 body 路由，
-	// 但 Authorization 头必须替换为号池 JWT；否则 IDE 原始 token 一旦失效，
-	// 上游会回 401 unauthenticated → IDE 报 "Model provider unreachable"。
+	// ★ 身份请求 (GetUserStatus/Ping/GetProfileData/...) 不需要解析 conv_id 路由，
+	// 但 Authorization 头 + body 内身份字段都必须替换为号池 key/JWT；
+	// 仅替换 Authorization 会导致上游回:
+	//   "unauthenticated: API key requires token authentication"
+	// (JWT 属号池 key A，但 body 里 api_key 仍是 IDE 原始 key B → 不匹配)
 	if !mayHaveConversationID(path) {
 		poolKey, poolJWT := p.pickPoolKeyAndJWT()
-		if poolKey != "" && len(poolJWT) > 0 {
-			req.Header.Set("Authorization", "Bearer "+string(poolJWT))
-			req.Header.Set("X-Pool-Key-Used", poolKey)
+		if poolKey == "" || len(poolJWT) == 0 {
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+string(poolJWT))
+		req.Header.Set("X-Pool-Key-Used", poolKey)
+
+		// 同步替换 body 内身份字段，避免 JWT 与 body 不一致
+		if req.Body == nil {
+			return
+		}
+		bodyBytes, err := io.ReadAll(req.Body)
+		req.Body.Close()
+		if err != nil || len(bodyBytes) == 0 {
+			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			return
+		}
+		p.mu.RLock()
+		randFP := p.isTrialOrFreeKey(poolKey)
+		fp := p.keyFingerprint(poolKey)
+		p.mu.RUnlock()
+		newBody, replaced := ReplaceIdentityInBody(bodyBytes, []byte(poolKey), poolJWT, randFP, fp)
+		if replaced {
+			req.Body = io.NopCloser(bytes.NewReader(newBody))
+			req.ContentLength = int64(len(newBody))
+		} else {
+			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		}
 		return
 	}
