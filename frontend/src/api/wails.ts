@@ -52,6 +52,31 @@ export const APIInfo = {
   switchAccountLocal: (AppHooks as any).SwitchAccountLocal,
   // Cascade 破限注入（system prompt 末尾追加 override 文本）
   getJailbreakDefaultOverride: (AppHooks as any).GetJailbreakDefaultOverride as () => Promise<string>,
+  // v1.2.0 破限增强：预设 / 文件源 / 统计 / OS 集成
+  listJailbreakPresets: (AppHooks as any).ListJailbreakPresets as () => Promise<Array<{
+    id: string; name: string; description: string; risk: string; text: string;
+  }>>,
+  getJailbreakRuntime: (AppHooks as any).GetJailbreakRuntime as () => Promise<{
+    enabled: boolean;
+    preset_id: string;
+    source: string;
+    active_text: string;
+    active_length: number;
+    file_path?: string;
+    file_status?: {
+      path: string; exists: boolean; size: number; charset: string;
+      excerpt: string; truncated: boolean; is_dir: boolean; error?: string;
+    };
+    stats: {
+      total_injects: number; today_injects: number;
+      last_inject_at?: string; since_last_inject_ms: number;
+    };
+    warn_anthropic: boolean;
+  }>,
+  saveJailbreakOverrideFile: (AppHooks as any).SaveJailbreakOverrideFile as (text: string) => Promise<string>,
+  openJailbreakOverrideFile: (AppHooks as any).OpenJailbreakOverrideFile as () => Promise<string>,
+  revealJailbreakOverrideFolder: (AppHooks as any).RevealJailbreakOverrideFolder as () => Promise<string>,
+  resetJailbreakStats: (AppHooks as any).ResetJailbreakStats as () => Promise<void>,
 
   // Clash IP 轮换
   testClashController: (AppHooks as any).TestClashController,

@@ -54,6 +54,9 @@ export function createDefaultSettings(): models.Settings {
     static_cache_intercept: true,
     mitm_jailbreak_enabled: false,
     mitm_jailbreak_override: '',
+    mitm_jailbreak_preset_id: 'custom',
+    mitm_jailbreak_override_source: 'inline',
+    mitm_jailbreak_override_file: '',
     mitm_full_capture: false,
     mitm_debug_dump: false,
     clash_rotate_enabled: false,
@@ -210,6 +213,12 @@ export type SettingsForm = {
   mitm_jailbreak_enabled: boolean
   /** 破限注入文本（空字符串 = 后端 fallback 到 DefaultJailbreakOverride） */
   mitm_jailbreak_override: string
+  /** 预设 ID: custom / minimal / soft_safe / original_full */
+  mitm_jailbreak_preset_id: string
+  /** 文本来源: inline / file */
+  mitm_jailbreak_override_source: string
+  /** 当 source=file 时的文件路径（空 → 默认 ~/.claude/override.md） */
+  mitm_jailbreak_override_file: string
   /** MITM 全量抓包落盘 */
   mitm_full_capture: boolean
   /** MITM protobuf dump 诊断 */
@@ -247,6 +256,9 @@ export function settingsToForm(s: models.Settings): SettingsForm {
     static_cache_intercept: s.static_cache_intercept !== false,
     mitm_jailbreak_enabled: s.mitm_jailbreak_enabled === true,
     mitm_jailbreak_override: String(s.mitm_jailbreak_override ?? ''),
+    mitm_jailbreak_preset_id: String((s as any).mitm_jailbreak_preset_id ?? 'custom'),
+    mitm_jailbreak_override_source: String((s as any).mitm_jailbreak_override_source ?? 'inline'),
+    mitm_jailbreak_override_file: String((s as any).mitm_jailbreak_override_file ?? ''),
     mitm_full_capture: s.mitm_full_capture === true,
     mitm_debug_dump: s.mitm_debug_dump === true,
     clash_rotate_enabled: s.clash_rotate_enabled === true,
@@ -284,6 +296,9 @@ export function formToSettings(form: SettingsForm): models.Settings {
     static_cache_intercept: form.static_cache_intercept,
     mitm_jailbreak_enabled: form.mitm_jailbreak_enabled,
     mitm_jailbreak_override: (form.mitm_jailbreak_override ?? '').trim(),
+    mitm_jailbreak_preset_id: (form.mitm_jailbreak_preset_id ?? 'custom').trim() || 'custom',
+    mitm_jailbreak_override_source: (form.mitm_jailbreak_override_source ?? 'inline').trim() || 'inline',
+    mitm_jailbreak_override_file: (form.mitm_jailbreak_override_file ?? '').trim(),
     mitm_full_capture: form.mitm_full_capture,
     mitm_debug_dump: form.mitm_debug_dump,
     clash_rotate_enabled: form.clash_rotate_enabled,

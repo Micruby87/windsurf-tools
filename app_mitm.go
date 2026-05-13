@@ -524,27 +524,160 @@ func (a *App) syncForgeConfig() {
 	})
 }
 
+// resolveActiveJailbreakOverride 根据 settings 计算实际生效的 override 文本。
+// 顺序：preset 显式选中 ≠ custom → 用 preset 文本；否则 → 看 Source：
+//   - file → 读 OverrideFile，失败降级到 inline
+//   - inline / 空 → 用 MitmJailbreakOverride textarea；为空再回退默认
+//
+// 返回 (text, source, filePath)。filePath 仅 Source=file 时填实际路径。
+func (a *App) resolveActiveJailbreakOverride() (string, string, string) {
+	if a.store == nil {
+		return services.DefaultJailbreakOverride, "inline", ""
+	}
+	s := a.store.GetSettings()
+
+	// 1) preset 优先
+	if pid := strings.TrimSpace(s.MitmJailbreakPresetID); pid != "" && pid != services.JailbreakPresetIDCustom {
+		if p := services.GetJailbreakPresetByID(pid); p != nil && p.Text != "" {
+			return p.Text, "preset:" + pid, ""
+		}
+	}
+
+	source := strings.TrimSpace(s.MitmJailbreakOverrideSource)
+	if source == "" {
+		source = services.JailbreakOverrideSourceInline
+	}
+
+	// 2) file 来源
+	if source == services.JailbreakOverrideSourceFile {
+		text, resolved, err := services.LoadJailbreakOverrideFile(s.MitmJailbreakOverrideFile)
+		if err == nil && strings.TrimSpace(text) != "" {
+			return text, services.JailbreakOverrideSourceFile, resolved
+		}
+		utils.DLog("[Jailbreak] file 源读取失败 (%s)，降级到 inline: %v", resolved, err)
+	}
+
+	// 3) inline 来源（默认）
+	override := strings.TrimSpace(s.MitmJailbreakOverride)
+	if override == "" {
+		override = services.DefaultJailbreakOverride
+	}
+	return override, services.JailbreakOverrideSourceInline, ""
+}
+
 // syncJailbreakConfig 把当前 settings 里的破限配置推到 MitmProxy。
-// 当 MitmJailbreakOverride 为空时，回退到 services.DefaultJailbreakOverride，
-// 避免「打开开关但没填文本」时静默失效。
+// 文本来源按 resolveActiveJailbreakOverride 的优先级解析。
 func (a *App) syncJailbreakConfig() {
 	if a.mitmProxy == nil || a.store == nil {
 		return
 	}
 	s := a.store.GetSettings()
-	override := strings.TrimSpace(s.MitmJailbreakOverride)
-	if override == "" {
-		override = services.DefaultJailbreakOverride
-	}
+	text, source, filePath := a.resolveActiveJailbreakOverride()
 	a.mitmProxy.SetJailbreakConfig(services.JailbreakConfig{
 		Enabled:  s.MitmJailbreakEnabled,
-		Override: override,
+		Override: text,
+		PresetID: strings.TrimSpace(s.MitmJailbreakPresetID),
+		Source:   source,
+		FilePath: filePath,
 	})
 }
 
 // GetJailbreakDefaultOverride 暴露默认破限文本给前端，供「恢复默认」按钮使用。
 func (a *App) GetJailbreakDefaultOverride() string {
 	return services.DefaultJailbreakOverride
+}
+
+// ── 破限增强 API（v1.2.0）──
+
+// ListJailbreakPresets 返回预设列表供前端下拉。
+func (a *App) ListJailbreakPresets() []services.JailbreakPreset {
+	return services.ListJailbreakPresets()
+}
+
+// GetJailbreakRuntime 一次性返回当前生效状态 + 注入统计 + 文件信息，
+// 给 UI 状态面板用。比让前端调 3 个 API 拼接更优。
+type JailbreakRuntime struct {
+	Enabled       bool                              `json:"enabled"`
+	PresetID      string                            `json:"preset_id"`
+	Source        string                            `json:"source"`            // inline / file / preset:xxx
+	ActiveText    string                            `json:"active_text"`       // 当前生效的完整文本
+	ActiveLength  int                               `json:"active_length"`     // 字符数
+	FilePath      string                            `json:"file_path,omitempty"`
+	FileStatus    *services.JailbreakFileStatus     `json:"file_status,omitempty"`
+	Stats         services.JailbreakStatsSnapshot   `json:"stats"`
+	WarnAnthropic bool                              `json:"warn_anthropic"`    // 检测到 cyber 雷词
+}
+
+func (a *App) GetJailbreakRuntime() JailbreakRuntime {
+	if a.mitmProxy == nil || a.store == nil {
+		return JailbreakRuntime{}
+	}
+	s := a.store.GetSettings()
+	text, source, filePath := a.resolveActiveJailbreakOverride()
+	rt := JailbreakRuntime{
+		Enabled:       s.MitmJailbreakEnabled,
+		PresetID:      strings.TrimSpace(s.MitmJailbreakPresetID),
+		Source:        source,
+		ActiveText:    text,
+		ActiveLength:  len([]rune(text)),
+		FilePath:      filePath,
+		Stats:         a.mitmProxy.GetJailbreakStats(),
+		WarnAnthropic: services.JailbreakTextHasCyberHazardWords(text),
+	}
+	if source == services.JailbreakOverrideSourceFile || filePath != "" {
+		st := services.InspectJailbreakOverrideFile(s.MitmJailbreakOverrideFile)
+		rt.FileStatus = &st
+	}
+	return rt
+}
+
+// SaveJailbreakOverrideFile 把当前 settings 里的 textarea 文本写到 file。
+// 用于「保存到文件」按钮：把 inline 文本沉淀为外部文件后切到 file 源。
+func (a *App) SaveJailbreakOverrideFile(text string) (string, error) {
+	if a.store == nil {
+		return "", nil
+	}
+	s := a.store.GetSettings()
+	return services.SaveJailbreakOverrideFile(s.MitmJailbreakOverrideFile, text)
+}
+
+// OpenJailbreakOverrideFile 用系统默认编辑器打开 override 文件。
+// 路径不存在时先用当前 settings 里的 textarea 文本（或默认 fallback）
+// 创建文件再打开，避免用户点了 "编辑" 弹空白。
+func (a *App) OpenJailbreakOverrideFile() (string, error) {
+	if a.store == nil {
+		return "", nil
+	}
+	s := a.store.GetSettings()
+	resolved := services.ResolveJailbreakOverrideFilePath(s.MitmJailbreakOverrideFile)
+	if !services.JailbreakOverrideFileExists(resolved) {
+		seed := strings.TrimSpace(s.MitmJailbreakOverride)
+		if seed == "" {
+			seed = services.DefaultJailbreakOverride
+		}
+		if _, err := services.SaveJailbreakOverrideFile(resolved, seed); err != nil {
+			return resolved, err
+		}
+	}
+	return resolved, openPathWithSystem(resolved)
+}
+
+// RevealJailbreakOverrideFolder 在 Finder/Explorer 打开 override 文件所在目录。
+func (a *App) RevealJailbreakOverrideFolder() (string, error) {
+	if a.store == nil {
+		return "", nil
+	}
+	s := a.store.GetSettings()
+	resolved := services.ResolveJailbreakOverrideFilePath(s.MitmJailbreakOverrideFile)
+	return resolved, revealPathInFileManager(resolved)
+}
+
+// ResetJailbreakStats 清零注入计数（UI debug 用）。
+func (a *App) ResetJailbreakStats() {
+	if a.mitmProxy == nil {
+		return
+	}
+	a.mitmProxy.ResetJailbreakStats()
 }
 
 func (a *App) syncStaticCacheConfig() {

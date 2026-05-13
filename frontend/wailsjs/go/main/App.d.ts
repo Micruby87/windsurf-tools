@@ -42,6 +42,8 @@ export function GetClashRotatorRunning():Promise<boolean>;
 
 export function GetJailbreakDefaultOverride():Promise<string>;
 
+export function GetJailbreakRuntime():Promise<main.JailbreakRuntime>;
+
 export function GetMitmCAPath():Promise<string>;
 
 export function GetMitmDebugDumpEnabled():Promise<boolean>;
@@ -80,11 +82,21 @@ export function ImportByRefreshToken(arg1:Array<main.TokenItem>):Promise<Array<m
 
 export function ListClashGroupNodes(arg1:string,arg2:string,arg3:string):Promise<Array<string>>;
 
+export function ListJailbreakPresets():Promise<Array<services.JailbreakPreset>>;
+
+export function OpenJailbreakOverrideFile():Promise<string>;
+
 export function RefreshAccountQuota(arg1:string):Promise<void>;
 
 export function RefreshAllQuotas():Promise<Record<string, string>>;
 
 export function RefreshAllTokens():Promise<Record<string, string>>;
+
+export function ResetJailbreakStats():Promise<void>;
+
+export function RevealJailbreakOverrideFolder():Promise<string>;
+
+export function SaveJailbreakOverrideFile(arg1:string):Promise<string>;
 
 export function SetSilentFromFlag(arg1:boolean):Promise<void>;
 

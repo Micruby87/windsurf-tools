@@ -78,6 +78,10 @@ export function GetJailbreakDefaultOverride() {
   return window['go']['main']['App']['GetJailbreakDefaultOverride']();
 }
 
+export function GetJailbreakRuntime() {
+  return window['go']['main']['App']['GetJailbreakRuntime']();
+}
+
 export function GetMitmCAPath() {
   return window['go']['main']['App']['GetMitmCAPath']();
 }
@@ -154,6 +158,14 @@ export function ListClashGroupNodes(arg1, arg2, arg3) {
   return window['go']['main']['App']['ListClashGroupNodes'](arg1, arg2, arg3);
 }
 
+export function ListJailbreakPresets() {
+  return window['go']['main']['App']['ListJailbreakPresets']();
+}
+
+export function OpenJailbreakOverrideFile() {
+  return window['go']['main']['App']['OpenJailbreakOverrideFile']();
+}
+
 export function RefreshAccountQuota(arg1) {
   return window['go']['main']['App']['RefreshAccountQuota'](arg1);
 }
@@ -164,6 +176,18 @@ export function RefreshAllQuotas() {
 
 export function RefreshAllTokens() {
   return window['go']['main']['App']['RefreshAllTokens']();
+}
+
+export function ResetJailbreakStats() {
+  return window['go']['main']['App']['ResetJailbreakStats']();
+}
+
+export function RevealJailbreakOverrideFolder() {
+  return window['go']['main']['App']['RevealJailbreakOverrideFolder']();
+}
+
+export function SaveJailbreakOverrideFile(arg1) {
+  return window['go']['main']['App']['SaveJailbreakOverrideFile'](arg1);
 }
 
 export function SetSilentFromFlag(arg1) {

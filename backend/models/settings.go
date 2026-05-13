@@ -29,11 +29,21 @@ type Settings struct {
 
 	// ── 破限注入（chat system prompt 末尾追加 override 文本） ──
 	// MitmJailbreakEnabled 开启后，所有 GetChatMessage / GetCompletions 请求
-	// 在 F2 顶层 system prompt 末尾追加 MitmJailbreakOverride 文本。覆盖
-	// alignment / 拒绝模板，等效于 patch-claude-v2.py 的 `--append-system-
-	// prompt-file override.md`，但走协议层、IDE 升级不受影响。
-	MitmJailbreakEnabled  bool   `json:"mitm_jailbreak_enabled"`
+	// 在 F2 顶层 system prompt 末尾追加 override 文本。覆盖 alignment / 拒绝
+	// 模板，等效于 patch-claude-v2.py 的 `--append-system-prompt-file
+	// override.md`，但走协议层、IDE 升级不受影响。
+	MitmJailbreakEnabled bool `json:"mitm_jailbreak_enabled"`
+	// MitmJailbreakOverride 自定义 override 文本（Source=inline 时使用）。
+	// 留空 = 走后端 services.DefaultJailbreakOverride 兜底。
 	MitmJailbreakOverride string `json:"mitm_jailbreak_override"`
+	// MitmJailbreakPresetID 预设标识：custom / minimal / soft_safe /
+	// original_full。custom 时使用 MitmJailbreakOverride 文本。
+	MitmJailbreakPresetID string `json:"mitm_jailbreak_preset_id"`
+	// MitmJailbreakOverrideSource 文本来源：inline (默认) / file
+	MitmJailbreakOverrideSource string `json:"mitm_jailbreak_override_source"`
+	// MitmJailbreakOverrideFile 当 Source=file 时的文件路径。
+	// 空 = 默认 ~/.claude/override.md (与 Claude Code 共享)
+	MitmJailbreakOverrideFile string `json:"mitm_jailbreak_override_file"`
 
 	// ── GetUserStatus 伪造 ──
 	ForgeEnabled           bool   `json:"forge_enabled"`
@@ -80,41 +90,44 @@ type Settings struct {
 
 func DefaultSettings() Settings {
 	return Settings{
-		ConcurrentLimit:            5,
-		AutoRefreshTokens:          false,
-		AutoRefreshQuotas:          false,
-		QuotaRefreshPolicy:         "hybrid",
-		QuotaCustomIntervalMinutes: 360,
-		AutoSwitchPlanFilter:       "all",
-		AutoSwitchOnQuotaExhausted: true,
-		QuotaHotPollSeconds:        12,
-		MinimizeToTray:             false,
-		SilentStart:                false,
-		MitmDebugDump:              false,
-		MitmFullCapture:            false,
-		StaticCacheIntercept:       true,
-		MitmJailbreakEnabled:       false,
-		MitmJailbreakOverride:      "", // 空表示用 services.DefaultJailbreakOverride
-		ForgeEnabled:               false,
-		FakeCredits:                10000000,
-		FakeCreditsPremium:         150000,
-		FakeCreditsOther:           25000,
-		FakeCreditsUsed:            0,
-		FakeSubscriptionType:       "Enterprise",
-		FakeBillingExtendYears:     10,
-		DebugLog:                   false,
-		ImportConcurrency:          3,
-		OpenAIRelayEnabled:         false,
-		OpenAIRelayPort:            8787,
-		OpenAIRelaySecret:          "",
-		ClashRotateEnabled:         false,
-		ClashControllerURL:         "http://127.0.0.1:9097",
-		ClashSecret:                "",
-		ClashGroup:                 "",
-		ClashNodes:                 "",
-		ClashIntervalMinutes:       8,
-		ClashRotateOnRateLimit:     true,
-		ClashLatencyTestURL:        "http://www.gstatic.com/generate_204",
-		ClashLatencyMaxMs:          800,
+		ConcurrentLimit:             5,
+		AutoRefreshTokens:           false,
+		AutoRefreshQuotas:           false,
+		QuotaRefreshPolicy:          "hybrid",
+		QuotaCustomIntervalMinutes:  360,
+		AutoSwitchPlanFilter:        "all",
+		AutoSwitchOnQuotaExhausted:  true,
+		QuotaHotPollSeconds:         12,
+		MinimizeToTray:              false,
+		SilentStart:                 false,
+		MitmDebugDump:               false,
+		MitmFullCapture:             false,
+		StaticCacheIntercept:        true,
+		MitmJailbreakEnabled:        false,
+		MitmJailbreakOverride:       "", // 空表示用 services.DefaultJailbreakOverride
+		MitmJailbreakPresetID:       "custom",
+		MitmJailbreakOverrideSource: "inline",
+		MitmJailbreakOverrideFile:   "", // 空 → 默认 ~/.claude/override.md
+		ForgeEnabled:                false,
+		FakeCredits:                 10000000,
+		FakeCreditsPremium:          150000,
+		FakeCreditsOther:            25000,
+		FakeCreditsUsed:             0,
+		FakeSubscriptionType:        "Enterprise",
+		FakeBillingExtendYears:      10,
+		DebugLog:                    false,
+		ImportConcurrency:           3,
+		OpenAIRelayEnabled:          false,
+		OpenAIRelayPort:             8787,
+		OpenAIRelaySecret:           "",
+		ClashRotateEnabled:          false,
+		ClashControllerURL:          "http://127.0.0.1:9097",
+		ClashSecret:                 "",
+		ClashGroup:                  "",
+		ClashNodes:                  "",
+		ClashIntervalMinutes:        8,
+		ClashRotateOnRateLimit:      true,
+		ClashLatencyTestURL:         "http://www.gstatic.com/generate_204",
+		ClashLatencyMaxMs:           800,
 	}
 }

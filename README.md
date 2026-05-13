@@ -1,6 +1,6 @@
 # Windsurf Tools 🏄‍♂️
 
-[![Version](https://img.shields.io/badge/Version-v1.1.0-success)](https://github.com/seven7763/windsurf-tools/releases)
+[![Version](https://img.shields.io/badge/Version-v1.2.0-success)](https://github.com/seven7763/windsurf-tools/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#运行环境--prerequisites)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Wails](https://img.shields.io/badge/Built%20with-Wails%20v2-red)](https://wails.io/)
@@ -135,6 +135,32 @@ wails build
 ---
 
 ## 🔧 最近修复 | Recent Fixes
+
+### v1.2.0 (2026-05-14)
+
+**新功能 | Features**
+
+- **破限注入 全面增强 v2** — 「设置 → Cascade 破限注入」整组面板重构：
+  - **4 个预设模板**（带 risk 徽章 + 简介）：
+    - `极简（推荐日常）` — 只压拒绝口径 + 不水化代码，最不容易踩 Anthropic 网关，低风险
+    - `软版（脱敏）` — 去掉 cyber 关键词，保留 OVERRIDE 优先级 + 场景包装，中风险
+    - `原版（硬版）` — patch-claude-v2.py 原始文本，含 malware/exploit/RAT 完整白名单，⚠️ 必触 Anthropic cyber-policy 拒绝
+    - `自定义` — 用 textarea 自己编辑
+  - **外部文件源** — 可指定 `~/.claude/override.md` 等路径，与 Claude Code 共享 override 文件。textarea 与文件源 segmented switch 二选一
+  - **「打开编辑」/「在文件管理器显示」/「保存当前文本到文件」** — 跨平台 (macOS open / Windows explorer /select / Linux xdg-open)
+  - **运行时状态面板** — 显示当前生效文本来源、字符数、今日注入数、累计注入数、上次注入相对时间
+  - **cyber 雷词警告** — 启发式检测 override 文本含 malware/exploit/0day/AV-EDR bypass/DNS poisoning 等关键词时显示红框警告，提示必触发 Anthropic 网关拒绝
+- **注入计数器** — 后端 atomic + RWMutex 跟踪 total/today/last-inject-at，按本机时区自然日重置，UI 可一键清零
+
+**Bug 修复 | Bugfixes**
+
+- **`isMostlyText` UTF-8 续字节漏算** — 中文/日文/韩文 3 字节字符只 1/3 计入 → 文本被误判为 binary。现把 0x80-0xBF 续字节也计入文本范围
+
+**测试 | Tests**
+
+- `jailbreak_presets_test.go` — 4 个 preset ID 唯一性、文本语义、cyber 雷词检测（19 个子测试）
+- `jailbreak_file_test.go` — 路径解析（~展开/绝对路径/默认）、save/load 往返、超大截断、binary 检测
+- `jailbreak_stats_test.go` — record/snapshot 并发安全（50 goroutines × 100 次）、跨天自动重置
 
 ### v1.1.0 (2026-05-14)
 

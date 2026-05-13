@@ -280,7 +280,8 @@ type MitmProxy struct {
 
 	forgeConfig       ForgeConfig
 	staticCacheConfig StaticCacheConfig
-	jailbreakConfig   JailbreakConfig // chat system prompt 末尾注入「破限」覆盖文本
+	jailbreakConfig JailbreakConfig // chat system prompt 末尾注入「破限」覆盖文本
+	jailbreakStats  JailbreakStats  // 注入计数 / 上次时间，供 UI 状态面板
 
 	usageTracker *UsageTracker
 
@@ -1755,7 +1756,11 @@ func (p *MitmProxy) handleRequest(req *http.Request, origHost string) {
 		if injected, ok := InjectSystemPromptOverride(newBody, jb.Override); ok {
 			req.Body = io.NopCloser(bytes.NewReader(injected))
 			req.ContentLength = int64(len(injected))
-			p.log("破限注入: %s (+%dB to system prompt)", pathTail, len(injected)-len(newBody))
+			p.jailbreakStats.record()
+			p.log("破限注入: %s (+%dB to system prompt, total=%d today=%d)",
+				pathTail, len(injected)-len(newBody),
+				p.jailbreakStats.totalInjects.Load(),
+				p.jailbreakStats.snapshot().TodayInjects)
 		}
 	}
 

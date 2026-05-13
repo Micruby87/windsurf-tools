@@ -34,12 +34,80 @@ package services
 
 import (
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // JailbreakConfig 控制 system prompt 破限注入。
 type JailbreakConfig struct {
 	Enabled  bool   // 总开关
 	Override string // 注入到 system prompt 末尾的文本（建议 < 4KB，避免上下文挤压）
+	// PresetID 仅用于 UI 显示当前选了哪个预设；后端实际只看 Override 文本
+	PresetID string
+	// Source 标记当前 Override 文本来源（inline / file），仅 UI 显示
+	Source string
+	// FilePath 当 Source=file 时的实际文件路径（已展开 ~ 的绝对路径）
+	FilePath string
+}
+
+// JailbreakStats 运行时统计，给 UI 显示「已注入 X 次 / 上次 X 秒前」。
+// 字段都用 atomic 访问，避免 mu 串行；time 字段用 UnixNano 编码。
+type JailbreakStats struct {
+	totalInjects   atomic.Int64
+	lastInjectUnix atomic.Int64 // UnixNano
+	// 当日计数：按本机时区 0:00 重置；写时锁短临界区。
+	todayMu        sync.RWMutex
+	todayInjects   int64
+	todayStartUnix int64
+}
+
+// JailbreakStatsSnapshot 给前端的 DTO（不暴露内部 atomic 类型）。
+type JailbreakStatsSnapshot struct {
+	TotalInjects   int64  `json:"total_injects"`
+	TodayInjects   int64  `json:"today_injects"`
+	LastInjectAt   string `json:"last_inject_at,omitempty"` // RFC3339；从未注入则为空
+	SinceLastInjectMs int64 `json:"since_last_inject_ms"`     // 距上次注入毫秒数；从未注入为 -1
+}
+
+func (s *JailbreakStats) record() {
+	s.totalInjects.Add(1)
+	now := time.Now()
+	s.lastInjectUnix.Store(now.UnixNano())
+
+	s.todayMu.Lock()
+	defer s.todayMu.Unlock()
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
+	if s.todayStartUnix != dayStart {
+		// 跨天，重置当日计数
+		s.todayStartUnix = dayStart
+		s.todayInjects = 0
+	}
+	s.todayInjects++
+}
+
+func (s *JailbreakStats) snapshot() JailbreakStatsSnapshot {
+	total := s.totalInjects.Load()
+	lastUnix := s.lastInjectUnix.Load()
+	s.todayMu.RLock()
+	today := s.todayInjects
+	dayStart := s.todayStartUnix
+	s.todayMu.RUnlock()
+	// 跨天后还没新注入时显示 0
+	if dayStart > 0 && time.Now().Unix()-dayStart >= 86400 {
+		today = 0
+	}
+	out := JailbreakStatsSnapshot{
+		TotalInjects:      total,
+		TodayInjects:      today,
+		SinceLastInjectMs: -1,
+	}
+	if lastUnix > 0 {
+		t := time.Unix(0, lastUnix)
+		out.LastInjectAt = t.Format(time.RFC3339)
+		out.SinceLastInjectMs = time.Since(t).Milliseconds()
+	}
+	return out
 }
 
 // DefaultJailbreakOverride 默认注入文本。
@@ -156,4 +224,46 @@ func (p *MitmProxy) GetJailbreakConfig() JailbreakConfig {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.jailbreakConfig
+}
+
+// RecordJailbreakInject 在 proxy.go 注入成功后调用，++stats。
+// 单独方法避免外部包直接读 jailbreakStats 字段。
+func (p *MitmProxy) RecordJailbreakInject() {
+	p.jailbreakStats.record()
+}
+
+// GetJailbreakStats 返回当前注入统计快照（thread-safe）。
+func (p *MitmProxy) GetJailbreakStats() JailbreakStatsSnapshot {
+	return p.jailbreakStats.snapshot()
+}
+
+// ResetJailbreakStats 清零所有计数（UI debug 用）。
+func (p *MitmProxy) ResetJailbreakStats() {
+	p.jailbreakStats.totalInjects.Store(0)
+	p.jailbreakStats.lastInjectUnix.Store(0)
+	p.jailbreakStats.todayMu.Lock()
+	p.jailbreakStats.todayInjects = 0
+	p.jailbreakStats.todayStartUnix = 0
+	p.jailbreakStats.todayMu.Unlock()
+}
+
+// JailbreakTextHasCyberHazardWords 启发式检测 override 文本是否含
+// Anthropic cyber-verification policy 黑名单关键词（malware / exploit /
+// 0day 等）。命中则 UI 给警告，提示用户当前文本必触发网关拒绝。
+// 这是 best-effort 不是精确判断 —— Anthropic 内部黑名单未公开。
+func JailbreakTextHasCyberHazardWords(text string) bool {
+	lower := strings.ToLower(text)
+	hazards := []string{
+		"malware", "exploitation", "exploit chain", "0day", "0-day",
+		"shellcode", "rootkit", "keylogger", "trojan", "ransomware",
+		"c2 framework", "credential attack", "privilege escalation",
+		"av/edr", "edr bypass", "waf bypass", "ids bypass",
+		"dns poisoning", "packet injection",
+	}
+	for _, kw := range hazards {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
 }

@@ -132,6 +132,52 @@ export namespace main {
 	        this.remark = source["remark"];
 	    }
 	}
+	export class JailbreakRuntime {
+	    enabled: boolean;
+	    preset_id: string;
+	    source: string;
+	    active_text: string;
+	    active_length: number;
+	    file_path?: string;
+	    file_status?: services.JailbreakFileStatus;
+	    stats: services.JailbreakStatsSnapshot;
+	    warn_anthropic: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new JailbreakRuntime(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.preset_id = source["preset_id"];
+	        this.source = source["source"];
+	        this.active_text = source["active_text"];
+	        this.active_length = source["active_length"];
+	        this.file_path = source["file_path"];
+	        this.file_status = this.convertValues(source["file_status"], services.JailbreakFileStatus);
+	        this.stats = this.convertValues(source["stats"], services.JailbreakStatsSnapshot);
+	        this.warn_anthropic = source["warn_anthropic"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class PerformanceTip {
 	    id: string;
 	    title: string;
@@ -297,6 +343,9 @@ export namespace models {
 	    static_cache_intercept: boolean;
 	    mitm_jailbreak_enabled: boolean;
 	    mitm_jailbreak_override: string;
+	    mitm_jailbreak_preset_id: string;
+	    mitm_jailbreak_override_source: string;
+	    mitm_jailbreak_override_file: string;
 	    forge_enabled: boolean;
 	    fake_credits: number;
 	    fake_credits_premium: number;
@@ -340,6 +389,9 @@ export namespace models {
 	        this.static_cache_intercept = source["static_cache_intercept"];
 	        this.mitm_jailbreak_enabled = source["mitm_jailbreak_enabled"];
 	        this.mitm_jailbreak_override = source["mitm_jailbreak_override"];
+	        this.mitm_jailbreak_preset_id = source["mitm_jailbreak_preset_id"];
+	        this.mitm_jailbreak_override_source = source["mitm_jailbreak_override_source"];
+	        this.mitm_jailbreak_override_file = source["mitm_jailbreak_override_file"];
 	        this.forge_enabled = source["forge_enabled"];
 	        this.fake_credits = source["fake_credits"];
 	        this.fake_credits_premium = source["fake_credits_premium"];
@@ -404,6 +456,70 @@ export namespace services {
 	        this.ok = source["ok"];
 	        this.error = source["error"];
 	        this.groups = source["groups"];
+	    }
+	}
+	export class JailbreakFileStatus {
+	    path: string;
+	    exists: boolean;
+	    size: number;
+	    charset: string;
+	    excerpt: string;
+	    truncated: boolean;
+	    is_dir: boolean;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new JailbreakFileStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.exists = source["exists"];
+	        this.size = source["size"];
+	        this.charset = source["charset"];
+	        this.excerpt = source["excerpt"];
+	        this.truncated = source["truncated"];
+	        this.is_dir = source["is_dir"];
+	        this.error = source["error"];
+	    }
+	}
+	export class JailbreakPreset {
+	    id: string;
+	    name: string;
+	    description: string;
+	    risk: string;
+	    text: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new JailbreakPreset(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.risk = source["risk"];
+	        this.text = source["text"];
+	    }
+	}
+	export class JailbreakStatsSnapshot {
+	    total_injects: number;
+	    today_injects: number;
+	    last_inject_at?: string;
+	    since_last_inject_ms: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new JailbreakStatsSnapshot(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.total_injects = source["total_injects"];
+	        this.today_injects = source["today_injects"];
+	        this.last_inject_at = source["last_inject_at"];
+	        this.since_last_inject_ms = source["since_last_inject_ms"];
 	    }
 	}
 	export class MitmProxyEvent {

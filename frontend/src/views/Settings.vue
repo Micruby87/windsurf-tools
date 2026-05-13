@@ -81,6 +81,9 @@ onMounted(() => {
   void settingsStore.fetchSettings();
   void fetchRelayStatus();
   void fetchClashStatus();
+  // 破限 v1.2.0：拉一次 preset 列表 + runtime 状态。手动刷新策略，不轮询。
+  void fetchJailbreakPresets();
+  void fetchJailbreakRuntime();
 });
 
 watch(
@@ -262,6 +265,137 @@ const restoreJailbreakDefault = async () => {
     /* ignore — 用户可手动清空，后端 fallback 会兜底 */
   }
 };
+
+// ── 破限增强 v1.2.0：preset / file / runtime stats ──
+type JailbreakPreset = {
+  id: string;
+  name: string;
+  description: string;
+  risk: string;
+  text: string;
+};
+type JailbreakRuntime = {
+  enabled: boolean;
+  preset_id: string;
+  source: string;
+  active_text: string;
+  active_length: number;
+  file_path?: string;
+  file_status?: {
+    path: string; exists: boolean; size: number; charset: string;
+    excerpt: string; truncated: boolean; is_dir: boolean; error?: string;
+  };
+  stats: {
+    total_injects: number; today_injects: number;
+    last_inject_at?: string; since_last_inject_ms: number;
+  };
+  warn_anthropic: boolean;
+};
+
+const jailbreakPresets = ref<JailbreakPreset[]>([]);
+const jailbreakRuntime = ref<JailbreakRuntime | null>(null);
+const jailbreakRuntimeLoading = ref(false);
+
+const fetchJailbreakPresets = async () => {
+  try {
+    jailbreakPresets.value = (await APIInfo.listJailbreakPresets()) || [];
+  } catch (e) {
+    console.warn("listJailbreakPresets failed", e);
+  }
+};
+
+const fetchJailbreakRuntime = async () => {
+  jailbreakRuntimeLoading.value = true;
+  try {
+    jailbreakRuntime.value = await APIInfo.getJailbreakRuntime();
+  } catch (e) {
+    console.warn("getJailbreakRuntime failed", e);
+  } finally {
+    jailbreakRuntimeLoading.value = false;
+  }
+};
+
+// 应用预设：把 preset.text 灌进 textarea 同时切到 custom 源，避免选了 preset
+// 又编辑 textarea 时困惑「我改了 textarea 为什么没生效？」。
+const applyJailbreakPreset = (id: string) => {
+  local.mitm_jailbreak_preset_id = id;
+  if (id === "custom") return; // custom 不动 textarea
+  const p = jailbreakPresets.value.find((x) => x.id === id);
+  if (p && p.text) {
+    local.mitm_jailbreak_override = p.text;
+  }
+};
+
+const handleOpenOverrideFile = async () => {
+  try {
+    const path = await APIInfo.openJailbreakOverrideFile();
+    showToast(`已用默认编辑器打开 ${path}`, "success");
+    setTimeout(fetchJailbreakRuntime, 500);
+  } catch (e) {
+    showToast(`打开失败: ${String(e)}`, "error");
+  }
+};
+
+const handleRevealOverrideFolder = async () => {
+  try {
+    await APIInfo.revealJailbreakOverrideFolder();
+  } catch (e) {
+    showToast(`显示位置失败: ${String(e)}`, "error");
+  }
+};
+
+const handleSaveOverrideToFile = async () => {
+  const text = local.mitm_jailbreak_override.trim() || "";
+  if (!text) {
+    showToast("当前 textarea 为空，先编辑或选预设再保存", "warning");
+    return;
+  }
+  try {
+    const path = await APIInfo.saveJailbreakOverrideFile(text);
+    showToast(`已保存到 ${path}`, "success");
+    await fetchJailbreakRuntime();
+  } catch (e) {
+    showToast(`保存失败: ${String(e)}`, "error");
+  }
+};
+
+const handleResetJailbreakStats = async () => {
+  try {
+    await APIInfo.resetJailbreakStats();
+    await fetchJailbreakRuntime();
+    showToast("注入计数已清零", "success");
+  } catch (e) {
+    showToast(`清零失败: ${String(e)}`, "error");
+  }
+};
+
+const jailbreakPresetByID = (id: string) =>
+  jailbreakPresets.value.find((p) => p.id === id) ?? null;
+
+const formatRelativeTime = (ms: number): string => {
+  if (ms < 0) return "—";
+  if (ms < 1000) return "刚才";
+  if (ms < 60_000) return `${Math.floor(ms / 1000)} 秒前`;
+  if (ms < 3600_000) return `${Math.floor(ms / 60_000)} 分钟前`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3600_000)} 小时前`;
+  return `${Math.floor(ms / 86_400_000)} 天前`;
+};
+
+const riskBadgeClass = (risk: string) => {
+  switch (risk) {
+    case "low":
+      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    case "medium":
+      return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    case "high":
+      return "bg-rose-500/10 text-rose-700 dark:text-rose-300";
+    default:
+      return "bg-gray-500/10 text-gray-700 dark:text-gray-300";
+  }
+};
+
+const riskBadgeLabel = (risk: string) =>
+  ({ low: "低风险", medium: "中风险", high: "高风险" })[risk] || "未知";
 
 // ── 一键智能启用 Clash IP 轮换 ──
 // 后端会：探活 → 自动挑 selector 组 → 写设置 → 启 rotator → 立即切一次
@@ -1310,8 +1444,9 @@ onUnmounted(() => {
             </div>
 
             <div
-              class="p-5 sm:p-6 flex flex-col gap-3 bg-rose-500/[0.04] border-t border-black/[0.04] dark:border-white/[0.04]"
+              class="p-5 sm:p-6 flex flex-col gap-4 bg-rose-500/[0.04] border-t border-black/[0.04] dark:border-white/[0.04]"
             >
+              <!-- 标题 + 总开关 -->
               <div class="flex items-center justify-between gap-4">
                 <div class="flex-1 pr-4">
                   <div
@@ -1321,31 +1456,208 @@ onUnmounted(() => {
                     Cascade 破限注入 (Jailbreak Override)
                   </div>
                   <div class="text-[13px] text-gray-500 dark:text-gray-400">
-                    在每次 GetChatMessage / GetCompletions 请求的 system prompt 末尾注入下方文本，覆盖模型的 alignment / 拒绝模板。等效于 Claude Code 的 <code>--append-system-prompt-file</code>，走 MITM 协议层，不动 IDE 文件。
+                    在每次 GetChatMessage / GetCompletions 请求的 system prompt 末尾注入 override 文本，覆盖模型 alignment / 拒绝模板。等效于 Claude Code <code>--append-system-prompt-file</code>，走 MITM 协议层，<b>不动 IDE 任何文件</b>。
                   </div>
                 </div>
                 <IToggle v-model="local.mitm_jailbreak_enabled" />
               </div>
 
-              <div v-if="local.mitm_jailbreak_enabled" class="flex flex-col gap-2">
-                <div class="flex items-center justify-between text-[12px] text-gray-500 dark:text-gray-400">
-                  <span>覆盖文本（留空 = 用内置默认 OPUS/Claude/Sonnet 通用破限）</span>
-                  <button
-                    type="button"
-                    class="text-rose-600 dark:text-rose-400 hover:underline"
-                    @click="restoreJailbreakDefault"
+              <div v-if="local.mitm_jailbreak_enabled" class="flex flex-col gap-3">
+                <!-- 预设下拉 -->
+                <div class="flex flex-col gap-1.5">
+                  <label class="text-[12px] font-bold text-gray-600 dark:text-gray-400">
+                    预设模板
+                  </label>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <select
+                      :value="local.mitm_jailbreak_preset_id"
+                      @change="applyJailbreakPreset(($event.target as HTMLSelectElement).value)"
+                      class="no-drag-region flex-1 min-w-[200px] px-3 py-2 rounded-lg text-[13px] font-medium bg-white dark:bg-gray-900 border border-black/[0.08] dark:border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-rose-500/40"
+                    >
+                      <option v-for="p in jailbreakPresets" :key="p.id" :value="p.id">
+                        {{ p.name }}
+                      </option>
+                    </select>
+                    <span
+                      v-if="jailbreakPresetByID(local.mitm_jailbreak_preset_id)"
+                      class="px-2.5 py-1 rounded-full text-[11px] font-bold"
+                      :class="riskBadgeClass(jailbreakPresetByID(local.mitm_jailbreak_preset_id)!.risk)"
+                    >
+                      {{ riskBadgeLabel(jailbreakPresetByID(local.mitm_jailbreak_preset_id)!.risk) }}
+                    </span>
+                  </div>
+                  <div
+                    v-if="jailbreakPresetByID(local.mitm_jailbreak_preset_id)"
+                    class="text-[11.5px] text-gray-500 dark:text-gray-400"
                   >
-                    恢复默认
-                  </button>
+                    {{ jailbreakPresetByID(local.mitm_jailbreak_preset_id)!.description }}
+                  </div>
                 </div>
-                <textarea
-                  v-model="local.mitm_jailbreak_override"
-                  rows="10"
-                  placeholder="留空使用内置默认破限文本…"
-                  class="w-full px-3 py-2 rounded-lg text-[12.5px] font-mono leading-relaxed bg-white dark:bg-gray-900 border border-black/[0.08] dark:border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-rose-500/40"
-                ></textarea>
+
+                <!-- 来源切换 -->
+                <div class="flex flex-col gap-1.5">
+                  <label class="text-[12px] font-bold text-gray-600 dark:text-gray-400">
+                    文本来源
+                  </label>
+                  <div class="flex gap-2">
+                    <button
+                      type="button"
+                      class="no-drag-region flex-1 px-3 py-1.5 rounded-lg text-[12px] font-bold transition-colors"
+                      :class="
+                        local.mitm_jailbreak_override_source === 'inline'
+                          ? 'bg-rose-500 text-white shadow-sm'
+                          : 'bg-black/[0.04] text-gray-600 dark:bg-white/[0.06] dark:text-gray-400 hover:bg-black/[0.08]'
+                      "
+                      @click="local.mitm_jailbreak_override_source = 'inline'"
+                    >
+                      内置 textarea
+                    </button>
+                    <button
+                      type="button"
+                      class="no-drag-region flex-1 px-3 py-1.5 rounded-lg text-[12px] font-bold transition-colors"
+                      :class="
+                        local.mitm_jailbreak_override_source === 'file'
+                          ? 'bg-rose-500 text-white shadow-sm'
+                          : 'bg-black/[0.04] text-gray-600 dark:bg-white/[0.06] dark:text-gray-400 hover:bg-black/[0.08]'
+                      "
+                      @click="local.mitm_jailbreak_override_source = 'file'"
+                    >
+                      外部文件
+                    </button>
+                  </div>
+                </div>
+
+                <!-- 文件路径 + 操作按钮 -->
+                <div v-if="local.mitm_jailbreak_override_source === 'file'" class="flex flex-col gap-2">
+                  <input
+                    v-model="local.mitm_jailbreak_override_file"
+                    placeholder="~/.claude/override.md（留空 = 默认路径，与 Claude Code 共享）"
+                    class="no-drag-region w-full px-3 py-2 rounded-lg text-[12px] font-mono bg-white dark:bg-gray-900 border border-black/[0.08] dark:border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-rose-500/40"
+                  />
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      class="no-drag-region px-3 py-1.5 rounded-lg text-[12px] font-bold bg-ios-blue/10 text-ios-blue hover:bg-ios-blue/20 transition-colors"
+                      @click="handleOpenOverrideFile"
+                    >
+                      打开编辑
+                    </button>
+                    <button
+                      type="button"
+                      class="no-drag-region px-3 py-1.5 rounded-lg text-[12px] font-bold bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 transition-colors"
+                      @click="handleRevealOverrideFolder"
+                    >
+                      在文件管理器显示
+                    </button>
+                    <button
+                      type="button"
+                      class="no-drag-region px-3 py-1.5 rounded-lg text-[12px] font-bold bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 transition-colors"
+                      @click="handleSaveOverrideToFile"
+                    >
+                      把当前文本保存到文件
+                    </button>
+                  </div>
+                </div>
+
+                <!-- inline textarea（仅 source=inline 时显示） -->
+                <div v-if="local.mitm_jailbreak_override_source !== 'file'" class="flex flex-col gap-1.5">
+                  <div class="flex items-center justify-between text-[12px] text-gray-500 dark:text-gray-400">
+                    <span>覆盖文本（preset ≠ custom 时会自动填充，可手动覆写）</span>
+                    <button
+                      type="button"
+                      class="text-rose-600 dark:text-rose-400 hover:underline"
+                      @click="restoreJailbreakDefault"
+                    >
+                      恢复默认
+                    </button>
+                  </div>
+                  <textarea
+                    v-model="local.mitm_jailbreak_override"
+                    rows="10"
+                    placeholder="留空使用内置默认破限文本…"
+                    class="w-full px-3 py-2 rounded-lg text-[12.5px] font-mono leading-relaxed bg-white dark:bg-gray-900 border border-black/[0.08] dark:border-white/[0.08] focus:outline-none focus:ring-2 focus:ring-rose-500/40"
+                  ></textarea>
+                </div>
+
+                <!-- 运行时状态面板 -->
+                <div
+                  class="rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-white/60 dark:bg-white/[0.03] p-3 flex flex-col gap-2"
+                >
+                  <div class="flex items-center justify-between">
+                    <span class="text-[12px] font-bold text-gray-700 dark:text-gray-300">
+                      运行时状态
+                    </span>
+                    <div class="flex gap-2">
+                      <button
+                        type="button"
+                        class="text-[11px] font-bold text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                        :disabled="jailbreakRuntimeLoading"
+                        @click="fetchJailbreakRuntime"
+                      >
+                        {{ jailbreakRuntimeLoading ? "刷新中…" : "刷新" }}
+                      </button>
+                      <button
+                        type="button"
+                        class="text-[11px] font-bold text-gray-400 hover:text-rose-600 dark:hover:text-rose-400"
+                        @click="handleResetJailbreakStats"
+                      >
+                        清零计数
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    v-if="jailbreakRuntime"
+                    class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11.5px]"
+                  >
+                    <div class="rounded bg-black/[0.04] dark:bg-white/[0.05] px-2 py-1.5">
+                      <div class="text-gray-500 dark:text-gray-400">来源</div>
+                      <div class="font-bold text-gray-800 dark:text-gray-100 truncate">
+                        {{ jailbreakRuntime.source }}
+                      </div>
+                    </div>
+                    <div class="rounded bg-black/[0.04] dark:bg-white/[0.05] px-2 py-1.5">
+                      <div class="text-gray-500 dark:text-gray-400">字符数</div>
+                      <div class="font-bold text-gray-800 dark:text-gray-100">
+                        {{ jailbreakRuntime.active_length }}
+                      </div>
+                    </div>
+                    <div class="rounded bg-black/[0.04] dark:bg-white/[0.05] px-2 py-1.5">
+                      <div class="text-gray-500 dark:text-gray-400">今日注入</div>
+                      <div class="font-bold text-gray-800 dark:text-gray-100">
+                        {{ jailbreakRuntime.stats.today_injects }} / 总 {{ jailbreakRuntime.stats.total_injects }}
+                      </div>
+                    </div>
+                    <div class="rounded bg-black/[0.04] dark:bg-white/[0.05] px-2 py-1.5">
+                      <div class="text-gray-500 dark:text-gray-400">上次注入</div>
+                      <div class="font-bold text-gray-800 dark:text-gray-100">
+                        {{ formatRelativeTime(jailbreakRuntime.stats.since_last_inject_ms) }}
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 文件路径展示 -->
+                  <div
+                    v-if="jailbreakRuntime && jailbreakRuntime.file_path"
+                    class="text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate"
+                    :title="jailbreakRuntime.file_path"
+                  >
+                    📁 {{ jailbreakRuntime.file_path }}
+                    <span v-if="jailbreakRuntime.file_status && !jailbreakRuntime.file_status.exists" class="text-rose-600">
+                      （文件不存在）
+                    </span>
+                  </div>
+
+                  <!-- cyber 雷词警告 -->
+                  <div
+                    v-if="jailbreakRuntime && jailbreakRuntime.warn_anthropic"
+                    class="rounded-lg border border-rose-500/30 bg-rose-500/[0.08] px-3 py-2 text-[11.5px] text-rose-700 dark:text-rose-300"
+                  >
+                    ⚠ 当前 override 文本含 cyber/malware/exploit 等关键词，<b>必定触发 Anthropic 网关 cyber-verification policy 拒绝</b>。建议切到 "极简" 或 "软版" preset。
+                  </div>
+                </div>
+
                 <div class="text-[11px] text-amber-600 dark:text-amber-400">
-                  ⚠ 仅供本地实验/学术研究使用。注入文本不会上传服务端，仅在本机 MITM 拦截阶段附加到请求体。
+                  ⚠ 仅供本地实验/学术研究使用。注入文本不会上传第三方服务端，仅在本机 MITM 拦截阶段附加到请求体。
                 </div>
               </div>
             </div>
