@@ -39,7 +39,7 @@ watch(() => props.isOpen, (open: boolean) => {
 const detectionSummary = computed<DetectionSummary>(() => {
   const lines = inputText.value.split('\n').map(l => l.trim()).filter(Boolean)
   if (!lines.length) {
-    return { api_key: 0, jwt: 0, refresh_token: 0, password: 0, unknown: 0, total: 0 }
+    return { api_key: 0, jwt: 0, refresh_token: 0, password: 0, email_apikey: 0, unknown: 0, total: 0 }
   }
   const grouped = groupImportLines(lines)
   return summarizeGrouped(grouped)
@@ -58,11 +58,12 @@ const typeLabels: Record<string, { label: string; icon: typeof Mail; color: stri
   jwt: { label: 'JWT', icon: Shield, color: 'text-amber-600 dark:text-amber-300' },
   password: { label: '邮箱/密码', icon: Mail, color: 'text-ios-blue' },
   refresh_token: { label: 'Refresh Token', icon: RefreshCcw, color: 'text-emerald-600 dark:text-emerald-400' },
+  email_apikey: { label: '邮箱/Token', icon: KeyRound, color: 'text-pink-600 dark:text-pink-300' },
 }
 
 const activeTypes = computed(() => {
   const s = detectionSummary.value
-  return (['api_key', 'jwt', 'password', 'refresh_token'] as const)
+  return (['api_key', 'jwt', 'password', 'refresh_token', 'email_apikey'] as const)
     .filter(t => s[t] > 0)
     .map(t => ({ type: t, count: s[t], ...typeLabels[t] }))
 })
@@ -103,6 +104,16 @@ const handleImport = async () => {
       const batch = await importBatched(
         grouped.tokens,
         (slice) => APIInfo.importByRefreshToken(slice),
+        (acc) => { results.value = [...allResults, ...acc] },
+      )
+      allResults.push(...(batch || []))
+      results.value = [...allResults]
+    }
+
+    if (grouped.emailApiKeys.length) {
+      const batch = await importBatched(
+        grouped.emailApiKeys,
+        (slice) => APIInfo.importByEmailAPIKey(slice),
         (acc) => { results.value = [...allResults, ...acc] },
       )
       allResults.push(...(batch || []))
@@ -160,7 +171,7 @@ const handleImport = async () => {
               </span>
             </div>
             <p class="mt-1 text-[12px] leading-relaxed text-ios-textSecondary dark:text-ios-textSecondaryDark">
-              直接粘贴混合内容，自动识别 API Key / JWT / 邮箱密码 / Refresh Token 并分别导入。
+              直接粘贴混合内容，自动识别 API Key / JWT / 邮箱密码 / 邮箱----Token / Refresh Token 并分别导入。
             </p>
           </div>
         </div>
@@ -234,7 +245,7 @@ const handleImport = async () => {
             <div>
               <div class="text-[13px] font-bold text-ios-text dark:text-ios-textDark">混合粘贴</div>
               <div class="text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
-                支持混合粘贴 — API Key、JWT、邮箱密码、Refresh Token 可一起粘贴，自动分流导入。
+                支持混合粘贴 — API Key、JWT、邮箱密码、邮箱----Token、Refresh Token 可一起粘贴，自动分流导入。
               </div>
             </div>
           </div>
@@ -242,7 +253,7 @@ const handleImport = async () => {
           <textarea
             v-model="inputText"
             class="no-drag-region w-full h-[180px] bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(246,249,252,0.9))] dark:bg-[linear-gradient(180deg,rgba(10,10,12,0.75),rgba(18,18,20,0.88))] border border-black/10 dark:border-white/10 p-4 rounded-[18px] focus:outline-none focus:ring-2 focus:ring-ios-blue/50 dark:focus:ring-ios-blue/30 resize-none font-mono text-[13px] shadow-inner transition-all"
-            placeholder="粘贴任意格式的凭证…&#10;sk-ws-01-xxxx&#10;eyJhbGciOi...&#10;user@mail.com password123&#10;AMf-vBx..."
+            placeholder="粘贴任意格式的凭证…&#10;sk-ws-01-xxxx&#10;eyJhbGciOi...&#10;user@mail.com password123&#10;user@mail.com----devin-session-token$eyJ...&#10;AMf-vBx..."
           />
         </div>
 
@@ -294,7 +305,7 @@ const handleImport = async () => {
               <template v-else-if="totalInputLines > 0">
                 <span class="text-amber-700 dark:text-amber-300">
                   {{ totalInputLines }} 行均未识别为有效凭证 —
-                  请检查格式（API Key/JWT/邮箱密码/Refresh Token）
+                  请检查格式（API Key/JWT/邮箱密码/邮箱----Token/Refresh Token）
                 </span>
               </template>
               <template v-else>等待粘贴内容</template>

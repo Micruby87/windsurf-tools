@@ -39,6 +39,11 @@ type JWTItem struct {
 	JWT    string `json:"jwt"`
 	Remark string `json:"remark"`
 }
+type EmailAPIKeyItem struct {
+	Email  string `json:"email"`
+	APIKey string `json:"api_key"`
+	Remark string `json:"remark"`
+}
 
 // importConcurrency 返回导入并发数（钳位 1～20）
 func (a *App) importConcurrency() int {
@@ -255,6 +260,31 @@ func (a *App) ImportByJWT(items []JWTItem) []ImportResult {
 			acc.Nickname = strings.Split(acc.Email, "@")[0]
 		}
 		return importSlot{index: idx, result: ImportResult{Email: acc.Email, Success: true}, acc: acc}
+	})
+}
+
+func (a *App) ImportByEmailAPIKey(items []EmailAPIKeyItem) []ImportResult {
+	return a.runConcurrentImport(len(items), func(idx int) importSlot {
+		item := items[idx]
+		email := strings.TrimSpace(item.Email)
+		apiKey := strings.TrimSpace(item.APIKey)
+		if email == "" || apiKey == "" {
+			return importSlot{index: idx, result: ImportResult{
+				Email: email, Success: false, Error: "邮箱或 Token 为空",
+			}}
+		}
+		nickname := item.Remark
+		if nickname == "" {
+			nickname = strings.Split(email, "@")[0]
+		}
+		acc := models.NewAccount(email, "", nickname)
+		acc.WindsurfAPIKey = apiKey
+		acc.Remark = item.Remark
+		a.enrichAccountInfoLite(acc)
+		if acc.Nickname == "" {
+			acc.Nickname = strings.Split(email, "@")[0]
+		}
+		return importSlot{index: idx, result: ImportResult{Email: email, Success: true}, acc: acc}
 	})
 }
 

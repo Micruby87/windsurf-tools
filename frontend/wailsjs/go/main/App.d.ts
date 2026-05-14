@@ -80,6 +80,8 @@ export function GetWindsurfProcessInfo():Promise<Array<Record<string, any>>>;
 
 export function ImportByAPIKey(arg1:Array<main.APIKeyItem>):Promise<Array<main.ImportResult>>;
 
+export function ImportByEmailAPIKey(arg1:Array<main.EmailAPIKeyItem>):Promise<Array<main.ImportResult>>;
+
 export function ImportByEmailPassword(arg1:Array<main.EmailPasswordItem>):Promise<Array<main.ImportResult>>;
 
 export function ImportByJWT(arg1:Array<main.JWTItem>):Promise<Array<main.ImportResult>>;

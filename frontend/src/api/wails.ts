@@ -26,6 +26,7 @@ export const APIInfo = {
   importByEmailPassword: AppHooks.ImportByEmailPassword,
   importByJWT: AppHooks.ImportByJWT,
   importByAPIKey: AppHooks.ImportByAPIKey,
+  importByEmailAPIKey: AppHooks.ImportByEmailAPIKey,
   importByRefreshToken: AppHooks.ImportByRefreshToken,
   addSingleAccount: AppHooks.AddSingleAccount,
 

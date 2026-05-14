@@ -13,7 +13,7 @@ import { parsePasswordLine, mergePasswordContinuationLines } from './importParse
  * 误粘 "test" / "1234" / 中文备注 等会被提交到后端 → 后端 Firebase
  * refresh API 一定失败，浪费请求、堆错误结果、UX 困惑。
  */
-export type DetectedType = 'api_key' | 'jwt' | 'password' | 'refresh_token' | 'unknown'
+export type DetectedType = 'api_key' | 'jwt' | 'password' | 'refresh_token' | 'email_apikey' | 'unknown'
 
 export interface DetectedLine {
   type: DetectedType
@@ -23,6 +23,7 @@ export interface DetectedLine {
 const API_KEY_RE = /^sk-ws-/i
 const JWT_RE = /^eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+/
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/i
+const EMAIL_SEPARATOR_TOKEN_RE = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}-{2,}(devin-session-token\$|sk-ws-|eyJ)/i
 // refresh_token 的最小可接受长度（Firebase refresh token 实际约 200+ 字符；
 // 这里宽松一点 40 字符门槛，过滤掉明显是错粘的短串）
 const REFRESH_TOKEN_MIN_LEN = 40
@@ -33,6 +34,7 @@ export function detectLineType(line: string): DetectedType {
 
   if (API_KEY_RE.test(first)) return 'api_key'
   if (JWT_RE.test(first)) return 'jwt'
+  if (EMAIL_SEPARATOR_TOKEN_RE.test(trimmed)) return 'email_apikey'
   if (EMAIL_RE.test(trimmed)) return 'password'
   // 长字符串 → 可能是 refresh token
   if (first.length >= REFRESH_TOKEN_MIN_LEN) return 'refresh_token'
@@ -45,6 +47,7 @@ export interface GroupedImportItems {
   jwts: main.JWTItem[]
   tokens: main.TokenItem[]
   passwords: main.EmailPasswordItem[]
+  emailApiKeys: main.EmailAPIKeyItem[]
   /** 未识别的行（短输入 / 备注 / 乱码），仅用于 UI 提示，不会提交 */
   unknown: string[]
 }
@@ -59,6 +62,7 @@ export function groupImportLines(rawLines: string[]): GroupedImportItems {
     jwts: [],
     tokens: [],
     passwords: [],
+    emailApiKeys: [],
     unknown: [],
   }
 
@@ -84,12 +88,22 @@ export function groupImportLines(rawLines: string[]): GroupedImportItems {
       case 'refresh_token':
         result.tokens.push(new main.TokenItem({ token: first, remark }))
         break
+      case 'email_apikey': {
+        const sepIdx = line.indexOf('----')
+        if (sepIdx > 0) {
+          const email = line.slice(0, sepIdx).trim()
+          const token = line.slice(sepIdx).replace(/^-+/, '').trim()
+          result.emailApiKeys.push(new main.EmailAPIKeyItem({ email, api_key: token, remark: '' }))
+        } else {
+          result.unknown.push(line)
+        }
+        break
+      }
       case 'password': {
         const parsed = parsePasswordLine(line)
         if (parsed) {
           emailSeen.set(parsed.email.toLowerCase(), parsed)
         } else {
-          // EMAIL_RE 命中但 parsePasswordLine 解析失败（如缺密码、WFH 卡密格式等）
           result.unknown.push(line)
         }
         break
@@ -109,6 +123,7 @@ export interface DetectionSummary {
   jwt: number
   refresh_token: number
   password: number
+  email_apikey: number
   unknown: number
   /** 可提交的总数（不含 unknown） */
   total: number
@@ -120,7 +135,8 @@ export function summarizeGrouped(g: GroupedImportItems): DetectionSummary {
     jwt: g.jwts.length,
     refresh_token: g.tokens.length,
     password: g.passwords.length,
+    email_apikey: g.emailApiKeys.length,
     unknown: g.unknown.length,
-    total: g.apiKeys.length + g.jwts.length + g.tokens.length + g.passwords.length,
+    total: g.apiKeys.length + g.jwts.length + g.tokens.length + g.passwords.length + g.emailApiKeys.length,
   }
 }

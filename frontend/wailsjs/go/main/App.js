@@ -154,6 +154,10 @@ export function ImportByAPIKey(arg1) {
   return window['go']['main']['App']['ImportByAPIKey'](arg1);
 }
 
+export function ImportByEmailAPIKey(arg1) {
+  return window['go']['main']['App']['ImportByEmailAPIKey'](arg1);
+}
+
 export function ImportByEmailPassword(arg1) {
   return window['go']['main']['App']['ImportByEmailPassword'](arg1);
 }

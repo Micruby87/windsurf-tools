@@ -144,6 +144,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class EmailAPIKeyItem {
+	    email: string;
+	    api_key: string;
+	    remark: string;
+
+	    static createFrom(source: any = {}) {
+	        return new EmailAPIKeyItem(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.email = source["email"];
+	        this.api_key = source["api_key"];
+	        this.remark = source["remark"];
+	    }
+	}
 	export class EmailPasswordItem {
 	    email: string;
 	    password: string;
