@@ -1,6 +1,6 @@
 # Windsurf Tools 🏄‍♂️
 
-[![Version](https://img.shields.io/badge/Version-v1.8.0-success)](https://github.com/seven7763/windsurf-tools/releases)
+[![Version](https://img.shields.io/badge/Version-v1.9.0-success)](https://github.com/seven7763/windsurf-tools/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](#运行环境--prerequisites)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Wails](https://img.shields.io/badge/Built%20with-Wails%20v2-red)](https://wails.io/)
@@ -212,6 +212,15 @@ wails build
 ---
 
 ## 🔧 最近修复 | Recent Fixes
+
+### v1.9.0 (2026-05-14)
+
+**新增 邮箱----Token 导入格式 | Email-Token Import**
+
+- **新导入格式** — 支持 `email----devin-session-token$JWT` 格式批量导入。粘贴即自动识别为「邮箱/Token」类型（粉色标签），直接创建账号并写入号池，无需 GetJWTByAPIKey 验证
+- **后端 `ImportByEmailAPIKey`** — 新增导入方法，接收 email + API key 对，直接存入 `WindsurfAPIKey` 字段 + `enrichAccountInfoLite` 获取套餐信息
+- **前端自动检测增强** — `importAutoDetect.ts` 新增 `email_apikey` 类型，正则匹配 `email----devin-session-token$...` / `email----sk-ws-...` / `email----eyJ...` 三种变体
+- **ImportModal UI** — 新增「邮箱/Token」粉色标签 + placeholder 示例 + 格式提示文案
 
 ### v1.8.0 (2026-05-14)
 
