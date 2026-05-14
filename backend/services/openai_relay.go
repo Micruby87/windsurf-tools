@@ -731,11 +731,11 @@ func (r *OpenAIRelay) finalizeRelayOutcome(apiKey string, kind upstreamFailureKi
 		r.proxy.markRateLimitedAndRotate(apiKey, "relay-rate-limit="+detail)
 	case upstreamFailureAuth:
 		r.log("relay 结束为认证失败: key=%s... detail=%s", truncKey(apiKey), truncate(detail, 180))
-		if rotatedKey := r.proxy.rotateAfterAuthFailure(apiKey, "relay-auth="+detail); rotatedKey == "" {
-			if len(r.proxy.refreshJWTForKey(apiKey)) == 0 {
-				r.log("relay 认证失败且 JWT 刷新失败，无备用 key: %s...", truncKey(apiKey))
-			}
-		}
+		// rotateAfterAuthFailure 已经在后台 goroutine 里调 refreshJWTForKey；
+		// 这里再 sync 调一次会造成双 leader 竞争 + 异步 goroutine 可能在
+		// test cleanup 之后才执行 → race。下次请求若 JWT 仍未刷新成功，会
+		// 自然走 ensureJWTForKey 重新触发，无需在这里冗余刷新。
+		_ = r.proxy.rotateAfterAuthFailure(apiKey, "relay-auth="+detail)
 	default:
 		r.log("relay 结束为上游失败: key=%s... kind=%s detail=%s", truncKey(apiKey), kind, truncate(detail, 180))
 	}

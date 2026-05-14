@@ -11,7 +11,7 @@ import {
   ZoomIn,
 } from "lucide-vue-next";
 import { APP_PRODUCT_NAME, APP_PRODUCT_TAGLINE } from "../utils/appMode";
-import { APP_VERSION } from "../utils/appMeta";
+import { APP_VERSION, REPO_URL } from "../utils/appMeta";
 import LegalDisclaimer from "../components/LegalDisclaimer.vue";
 import { showToast } from "../utils/toast";
 
@@ -21,8 +21,6 @@ import sponsorQrImg from "../assets/contact/sponsor-qr.jpg";
 import wechatGroup1 from "../assets/contact/wechat-group-1.jpg";
 import wechatGroup2 from "../assets/contact/wechat-group-2.jpg";
 import wechatGroup3 from "../assets/contact/wechat-group-3.jpg";
-
-const repoURL = "https://github.com/seven7763/windsurf-tools";
 
 // 微信群轮播（3 张图，用户加群满了可以切下一张）
 const groupImages = [wechatGroup1, wechatGroup2, wechatGroup3];
@@ -49,7 +47,7 @@ const copyWechatID = async () => {
   }
 };
 
-const openGithub = () => window.open(repoURL, "_blank", "noopener");
+const openGithub = () => window.open(REPO_URL, "_blank", "noopener");
 </script>
 
 <template>
