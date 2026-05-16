@@ -1,19 +1,1470 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowRightLeft,
+  BarChart3,
+  CalendarDays,
+  ChevronRight,
+  Clock,
+  Download,
+  KeyRound,
+  Lock,
+  LogIn,
+  MoreHorizontal,
+  Plus,
+  RefreshCcw,
+  Search,
+  ShieldCheck,
+  Shuffle,
+  Sparkles,
+  Trash2,
+  UserX,
+  Users,
+  X,
+} from "lucide-react";
+import { APIInfo } from "../api/wails";
+import F7Banner from "../components/F7Banner";
+import AccountCardSkeleton from "../components/accounts/AccountCardSkeleton";
+import ImportModal from "../components/accounts/ImportModal";
+import PageLoadingSkeleton from "../components/common/PageLoadingSkeleton";
+import IDropdownMenu, {
+  type DropdownItem,
+} from "../components/ios/IDropdownMenu";
+import ISelectSheet from "../components/ios/ISelectSheet";
+import { useSmartFriend } from "../hooks/useSmartFriend";
+import { useAccountStore } from "../stores/useAccountStore";
+import { useMainViewStore } from "../stores/useMainViewStore";
+import { useMitmStatusStore } from "../stores/useMitmStatusStore";
+import { useSettingsStore } from "../stores/useSettingsStore";
+import {
+  getPlanTone,
+  isQuotaDepleted,
+  isWeeklyQuotaBlocked,
+} from "../utils/account";
 import { PRIMARY_POOL_LABEL } from "../utils/appMode";
+import {
+  formatDateTimeAsiaShanghai,
+  formatResetCountdownZH,
+  formatSyncTimeLine,
+} from "../utils/datetimeAsia";
+import {
+  SWITCH_PLAN_FILTER_TONES,
+  type SwitchPlanTone,
+} from "../utils/settingsModel";
+import {
+  confirmDialog,
+  showErrorToast,
+  showToast,
+} from "../utils/toast";
+import { models } from "../../wailsjs/go/models";
+
+const PLAN_SECTION_ORDER = [
+  "pro",
+  "max",
+  "team",
+  "enterprise",
+  "trial",
+  "free",
+  "unknown",
+] as const;
+
+const PLAN_SECTION_LABELS: Record<string, string> = {
+  pro: "Pro",
+  max: "Max / Ultimate",
+  team: "Teams",
+  enterprise: "Enterprise",
+  trial: "Trial",
+  free: "Free",
+  unknown: "未识别",
+};
+
+const PLAN_TONE_LABELS: Record<string, string> = {
+  pro: "Pro",
+  trial: "Trial",
+  free: "Free",
+  max: "Max",
+  team: "Teams",
+  enterprise: "Enterprise",
+  unknown: "未知",
+};
+
+const ACCOUNT_SORT_OPTIONS = [
+  { value: "group", label: "按分组（默认）", description: "Pro / Trial / Free 等套餐归类" },
+  { value: "name", label: "按邮箱 A→Z", description: "字典序排列" },
+  { value: "quota", label: "按日剩余额度 ↑", description: "见底的排在最前" },
+];
+
+const PAGE_SIZE_OPTIONS = [
+  { value: 30, label: "30 / 页" },
+  { value: 60, label: "60 / 页" },
+  { value: 120, label: "120 / 页" },
+  { value: 300, label: "300 / 页" },
+];
+
+type AccountQuickFilter =
+  | "all"
+  | "online"
+  | "switchable"
+  | "depleted"
+  | "runtime_exhausted"
+  | "low"
+  | "pending"
+  | "credential_gap";
+
+type CardStateTone = "online" | "ready" | "warning" | "danger" | "pending";
+
+const PANEL_TONE_CLASS: Record<CardStateTone, string> = {
+  online: "border-emerald-500/15 bg-emerald-500/[0.07]",
+  ready: "border-ios-blue/15 bg-ios-blue/[0.06]",
+  warning: "border-amber-500/15 bg-amber-500/[0.07]",
+  danger: "border-rose-500/15 bg-rose-500/[0.07]",
+  pending:
+    "border-black/[0.08] bg-black/[0.03] dark:border-white/[0.08] dark:bg-white/[0.04]",
+};
+
+const PLAN_ACCENT_CLASS: Record<string, string> = {
+  pro: "from-ios-blue via-sky-400 to-cyan-300",
+  max: "from-violet-500 via-fuchsia-400 to-rose-300",
+  team: "from-indigo-500 via-blue-400 to-cyan-300",
+  enterprise: "from-slate-600 via-slate-500 to-slate-300",
+  trial: "from-amber-500 via-orange-400 to-yellow-300",
+  free: "from-slate-400 via-slate-300 to-slate-200",
+  unknown: "from-gray-400 via-gray-300 to-gray-200",
+};
+
+function parseQuotaWidth(str: string): string {
+  const n = parseFloat(String(str).replace("%", "").trim());
+  if (!Number.isFinite(n) || n < 0) return "0%";
+  if (n > 100) return "100%";
+  return `${n}%`;
+}
 
 /**
- * Accounts view — React 重构占位
+ * Accounts view — Vue 1:1 完整迁移。
  *
- * 完整迁移见 Day 3。
+ * 主要功能：
+ * - 顶部工具栏：批量导入 / 下一席位 / 批量管理 dropdown
+ * - plan 类型 tabs + quick filter chips + 搜索 + 排序 + 分组操作
+ * - 卡片网格：plan badge / state chip / 操作 / 进度条 / pin/pool 徽章
+ * - 分页
+ * - 空状态 3 步 onboarding
  */
 export default function Accounts() {
+  const accountStore = useAccountStore();
+  const mainView = useMainViewStore();
+  const mitmStore = useMitmStatusStore();
+  const settingsStore = useSettingsStore();
+  const sf = useSmartFriend();
+
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [quotaRefreshingIds, setQuotaRefreshingIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeTab, setActiveTab] = useState<string>("all");
+  const [quickFilter, setQuickFilter] = useState<AccountQuickFilter>("all");
+  const [accountSort, setAccountSort] = useState<
+    "group" | "name" | "quota"
+  >("group");
+  const [pageSize, setPageSize] = useState<number>(60);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [planGroupFilter, setPlanGroupFilter] = useState<string>("");
+
+  // bootstrap：加载账号 / mitm 状态 / 设置；12s 后再 force 刷新
+  const bootstrapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    void useAccountStore.getState().ensureAccountsLoaded();
+    void useMitmStatusStore.getState().ensureStatusLoaded();
+    void useSettingsStore.getState().fetchSettings();
+    bootstrapTimer.current = setTimeout(() => {
+      void Promise.all([
+        useAccountStore.getState().fetchAccounts(true),
+        useMitmStatusStore.getState().fetchStatus(true),
+      ]);
+    }, 12_000);
+    return () => {
+      if (bootstrapTimer.current) clearTimeout(bootstrapTimer.current);
+    };
+  }, []);
+
+  // 筛选/搜索变化时重置到第一页
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, quickFilter, searchQuery, accountSort]);
+
+  // ── 单次遍历聚合：tab 计数 + free 计数 ──────────────────────────────
+  const accountAgg = useMemo(() => {
+    const counts: Partial<Record<SwitchPlanTone, number>> = {};
+    for (const t of SWITCH_PLAN_FILTER_TONES) counts[t] = 0;
+    let freeCount = 0;
+    for (const a of accountStore.accounts) {
+      const tone = getPlanTone(a.plan_name) as SwitchPlanTone;
+      counts[tone] = (counts[tone] ?? 0) + 1;
+      if (tone === "free") freeCount++;
+    }
+    return { counts, freeCount };
+  }, [accountStore.accounts]);
+
+  const tabsList = useMemo(() => {
+    const c = accountAgg.counts;
+    const tabs = PLAN_SECTION_ORDER.filter(
+      (k) => (c[k as SwitchPlanTone] ?? 0) > 0,
+    ).map((key) => ({
+      key,
+      label: PLAN_SECTION_LABELS[key] || key,
+      count: c[key as SwitchPlanTone] ?? 0,
+    }));
+    return [
+      { key: "all", label: "全部", count: accountStore.accounts.length },
+      ...tabs,
+    ];
+  }, [accountAgg, accountStore.accounts.length]);
+
+  const freePlanAccountCount = accountAgg.freeCount;
+
+  // ── 卡片状态 / 颜色 helper ─────────────────────────────────────────
+  const findMitmPoolRuntime = (acc: models.Account) => {
+    const key = String(acc.windsurf_api_key || "").trim();
+    const email = String(acc.email || "")
+      .trim()
+      .toLowerCase();
+    if (!key) return null;
+    return (
+      mitmStore.status?.pool_status?.find((item) => {
+        const itemEmail = String(item.email || "")
+          .trim()
+          .toLowerCase();
+        if (email && itemEmail) return email === itemEmail;
+        const short = String(item.key_short || "").trim();
+        return short && short === key;
+      }) ?? null
+    );
+  };
+
+  const isCurrentOnline = (acc: models.Account) =>
+    Boolean(findMitmPoolRuntime(acc)?.is_current);
+  const getBoundSessionCount = (acc: models.Account) =>
+    findMitmPoolRuntime(acc)?.bound_session_count ?? 0;
+
+  const isWeeklyBlockedDisplay = (acc: models.Account) =>
+    !sf.active && isWeeklyQuotaBlocked(acc);
+
+  const isExpiredAccount = (acc: models.Account) => {
+    const status = String(acc.status || "").toLowerCase();
+    if (status === "disabled" || status === "expired") return true;
+    if (!acc.subscription_expires_at) return false;
+    const ts = Date.parse(acc.subscription_expires_at);
+    return Number.isFinite(ts) && ts < Date.now();
+  };
+
+  const getCardStateMeta = (
+    acc: models.Account,
+  ): { tone: CardStateTone; label: string } => {
+    const sfActive = sf.active;
+    const mitmRuntime = findMitmPoolRuntime(acc);
+    if (!sfActive && mitmRuntime?.runtime_exhausted) {
+      return {
+        tone: "danger",
+        label: isCurrentOnline(acc) ? "当前活跃 · 运行时见底" : "运行时见底",
+      };
+    }
+    if (isCurrentOnline(acc)) {
+      return { tone: "online", label: sfActive ? "当前活跃 · F7" : "当前活跃" };
+    }
+    if (isExpiredAccount(acc)) {
+      return { tone: "danger", label: "已过期" };
+    }
+    const daily = parseFloat(
+      String(acc.daily_remaining || "")
+        .replace("%", "")
+        .trim(),
+    );
+    const weekly = parseFloat(
+      String(acc.weekly_remaining || "")
+        .replace("%", "")
+        .trim(),
+    );
+    const dailyKnown = Number.isFinite(daily);
+    const weeklyKnown = Number.isFinite(weekly);
+    if (!sfActive) {
+      const weeklyBlocked = isWeeklyQuotaBlocked(acc);
+      const exhausted = isQuotaDepleted(acc);
+      const lowQuota =
+        (dailyKnown && daily > 0 && daily < 20) ||
+        (weeklyKnown && weekly > 0 && weekly < 20);
+      if (weeklyBlocked) return { tone: "danger", label: "周限不可用" };
+      if (exhausted) return { tone: "danger", label: "额度见底" };
+      if (lowQuota) return { tone: "warning", label: "额度偏低" };
+    }
+    if (!acc.windsurf_api_key) {
+      return { tone: "pending", label: "待补 API Key" };
+    }
+    if (
+      !acc.subscription_expires_at &&
+      !dailyKnown &&
+      !weeklyKnown &&
+      !acc.last_quota_update
+    ) {
+      return { tone: "pending", label: "待同步" };
+    }
+    return { tone: "ready", label: sfActive ? "F7 · 已绕过额度" : "可参与轮换" };
+  };
+
+  const getQuotaColor = (str: string) => {
+    if (sf.active) return "bg-ios-green";
+    const n = parseFloat(String(str).replace("%", "").trim());
+    if (!Number.isFinite(n)) return "bg-gray-400";
+    if (n > 50) return "bg-ios-green";
+    if (n > 20) return "bg-yellow-500";
+    return "bg-ios-red";
+  };
+
+  const getPlanAccentClass = (acc: models.Account) =>
+    PLAN_ACCENT_CLASS[getPlanTone(acc.plan_name) as string] ??
+    PLAN_ACCENT_CLASS.unknown;
+
+  const hasApiKey = (acc: models.Account) =>
+    Boolean(String(acc.windsurf_api_key || "").trim());
+
+  const matchesQuickFilter = (
+    acc: models.Account,
+    filter: AccountQuickFilter,
+  ) => {
+    const meta = getCardStateMeta(acc);
+    switch (filter) {
+      case "online":
+        return meta.tone === "online";
+      case "switchable":
+        return meta.tone === "online" || meta.tone === "ready";
+      case "depleted":
+        return !sf.active && meta.tone === "danger";
+      case "runtime_exhausted":
+        return (
+          !sf.active && Boolean(findMitmPoolRuntime(acc)?.runtime_exhausted)
+        );
+      case "low":
+        return meta.tone === "warning";
+      case "pending":
+        return meta.tone === "pending";
+      case "credential_gap":
+        return !hasApiKey(acc);
+      default:
+        return true;
+    }
+  };
+
+  // ── 筛选 / 排序 / 分页 ─────────────────────────────────────────────
+  const filteredAccounts = useMemo(() => {
+    let list = accountStore.accounts;
+    if (activeTab !== "all") {
+      list = list.filter((a) => getPlanTone(a.plan_name) === activeTab);
+    }
+    if (quickFilter !== "all") {
+      list = list.filter((a) => matchesQuickFilter(a, quickFilter));
+    }
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (a) =>
+        (a.email?.toLowerCase().includes(q) ?? false) ||
+        (a.nickname?.toLowerCase().includes(q) ?? false) ||
+        (a.remark?.toLowerCase().includes(q) ?? false) ||
+        (a.plan_name?.toLowerCase().includes(q) ?? false),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountStore.accounts, activeTab, quickFilter, searchQuery, sf.active]);
+
+  const displayAccounts = useMemo(() => {
+    const items = [...filteredAccounts];
+    if (accountSort === "group") {
+      const orderMap = new Map<string, number>();
+      PLAN_SECTION_ORDER.forEach((p, i) => orderMap.set(p, i));
+      const fallback = PLAN_SECTION_ORDER.length;
+      const toneCache = new Map<string, number>();
+      const getToneIdx = (plan: string) => {
+        let idx = toneCache.get(plan);
+        if (idx === undefined) {
+          idx = orderMap.get(getPlanTone(plan)) ?? fallback;
+          toneCache.set(plan, idx);
+        }
+        return idx;
+      };
+      items.sort((a, b) => {
+        const d = getToneIdx(a.plan_name || "") - getToneIdx(b.plan_name || "");
+        return d !== 0
+          ? d
+          : (a.email || "").localeCompare(b.email || "", "zh-CN");
+      });
+    } else if (accountSort === "name") {
+      items.sort((a, b) =>
+        (a.email || "").localeCompare(b.email || "", "zh-CN"),
+      );
+    } else if (accountSort === "quota") {
+      items.sort((a, b) => {
+        const pa =
+          parseFloat(String(a.daily_remaining || "").replace("%", "")) || 0;
+        const pb =
+          parseFloat(String(b.daily_remaining || "").replace("%", "")) || 0;
+        return pa - pb;
+      });
+    }
+    return items;
+  }, [filteredAccounts, accountSort]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(displayAccounts.length / pageSize),
+  );
+  const pagedAccounts = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return displayAccounts.slice(start, start + pageSize);
+  }, [displayAccounts, currentPage, pageSize]);
+  const paginationRange = useMemo(() => {
+    const total = totalPages;
+    const cur = currentPage;
+    const maxButtons = 7;
+    if (total <= maxButtons) {
+      return Array.from({ length: total }, (_, i) => i + 1);
+    }
+    let start = Math.max(1, cur - Math.floor(maxButtons / 2));
+    let end = start + maxButtons - 1;
+    if (end > total) {
+      end = total;
+      start = end - maxButtons + 1;
+    }
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+  }, [totalPages, currentPage]);
+
+  // ── quick filter 单次遍历计数 ──────────────────────────────────────
+  const quickFilterOptions = useMemo<
+    Array<{ key: AccountQuickFilter; label: string; count: number }>
+  >(() => {
+    const counts: Record<Exclude<AccountQuickFilter, "all">, number> = {
+      online: 0,
+      switchable: 0,
+      depleted: 0,
+      runtime_exhausted: 0,
+      low: 0,
+      pending: 0,
+      credential_gap: 0,
+    };
+    for (const acc of accountStore.accounts) {
+      const meta = getCardStateMeta(acc);
+      const runtimeExhausted =
+        !sf.active && Boolean(findMitmPoolRuntime(acc)?.runtime_exhausted);
+      if (meta.tone === "online") counts.online++;
+      if (meta.tone === "online" || meta.tone === "ready") counts.switchable++;
+      if (!sf.active && meta.tone === "danger") counts.depleted++;
+      if (runtimeExhausted) counts.runtime_exhausted++;
+      if (meta.tone === "warning") counts.low++;
+      if (meta.tone === "pending") counts.pending++;
+      if (!hasApiKey(acc)) counts.credential_gap++;
+    }
+    return [
+      { key: "all", label: "全部", count: accountStore.accounts.length },
+      { key: "online", label: "当前活跃", count: counts.online },
+      { key: "switchable", label: "可切换", count: counts.switchable },
+      { key: "depleted", label: "额度见底", count: counts.depleted },
+      {
+        key: "runtime_exhausted",
+        label: "运行时见底",
+        count: counts.runtime_exhausted,
+      },
+      { key: "low", label: "额度偏低", count: counts.low },
+      { key: "pending", label: "待同步", count: counts.pending },
+      { key: "credential_gap", label: "待补 API Key", count: counts.credential_gap },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountStore.accounts, mitmStore.status, sf.active]);
+
+  const hasListFilters =
+    activeTab !== "all" ||
+    quickFilter !== "all" ||
+    Boolean(searchQuery.trim());
+  const clearListFilters = () => {
+    setActiveTab("all");
+    setQuickFilter("all");
+    setSearchQuery("");
+  };
+
+  // ── 操作 helpers ───────────────────────────────────────────────────
+  const handleDelete = async (id: string) => {
+    const ok = await confirmDialog("是否确认移除该账号？", {
+      confirmText: "移除",
+      cancelText: "取消",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await accountStore.deleteAccount(id);
+      showToast("账号已移除", "success");
+    } catch (e) {
+      showErrorToast(e, "移除失败");
+    }
+  };
+
+  const handleCleanExpired = async () => {
+    try {
+      const n = await accountStore.cleanExpiredAccounts();
+      showToast(`已清理 ${n} 个过期账号`, "success");
+    } catch (e) {
+      showErrorToast(e, "清理失败");
+    }
+  };
+
+  const handleDeleteFreePlans = async () => {
+    const n = freePlanAccountCount;
+    if (n === 0) {
+      showToast("当前没有 Free 计划的账号", "info");
+      return;
+    }
+    const ok = await confirmDialog(
+      `将永久删除 ${n} 个免费计划账号，不可恢复。`,
+      { confirmText: "删除", cancelText: "取消", destructive: true },
+    );
+    if (!ok) return;
+    try {
+      const deleted = await accountStore.deleteFreePlanAccounts();
+      showToast(`已删除 ${deleted} 个免费账号`, "success");
+    } catch (e) {
+      showErrorToast(e, "删除失败");
+    }
+  };
+
+  const handleRefreshTokens = async () => {
+    try {
+      const map = await accountStore.refreshAllTokens();
+      await mitmStore.fetchStatus(true);
+      const entries = Object.entries(map || {});
+      const ok = entries.filter(([, v]) => String(v).includes("成功")).length;
+      showToast(`刷新完成：${ok} / ${entries.length}`, "success");
+    } catch (e) {
+      showErrorToast(e, "刷新失败");
+    }
+  };
+
+  const handleRefreshAllQuotas = async () => {
+    try {
+      const map = await accountStore.refreshAllQuotas();
+      await mitmStore.fetchStatus(true);
+      const entries = Object.entries(map || {});
+      const synced = entries.filter(([, v]) =>
+        String(v).includes("已同步"),
+      ).length;
+      showToast(`同步完成：${synced} / ${entries.length}`, "success");
+    } catch (e) {
+      showErrorToast(e, "同步额度失败");
+    }
+  };
+
+  const handleSwitchNextSeat = async () => {
+    try {
+      const target = await mitmStore.switchToNext();
+      showToast(`MITM 已切到下一席位：${target || "已切换"}`, "success");
+    } catch (e) {
+      showErrorToast(e, "手动切换失败");
+    }
+  };
+
+  const handleRefreshOneQuota = async (id: string, email: string) => {
+    if (quotaRefreshingIds.has(id)) return;
+    setQuotaRefreshingIds((prev) => new Set(prev).add(id));
+    try {
+      await accountStore.refreshAccountQuota(id);
+      await accountStore.fetchAccounts(true);
+      await mitmStore.fetchStatus(true);
+      showToast(`${email} 额度已更新`, "success");
+    } catch (e) {
+      showErrorToast(e, "刷新额度失败");
+    } finally {
+      setQuotaRefreshingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const isAccountCardRefreshing = (id: string) => quotaRefreshingIds.has(id);
+
+  const handleSwitchMitmToAccount = async (acc: models.Account) => {
+    try {
+      const target = await mitmStore.switchToAccount(acc.id);
+      await accountStore.fetchAccounts(true);
+      showToast(
+        `MITM 已切到：${target || acc.email || "目标账号"}`,
+        "success",
+      );
+    } catch (e) {
+      showErrorToast(e, "切换到该账号失败");
+    }
+  };
+
+  const handleLoginToWindsurf = async (acc: models.Account) => {
+    try {
+      const target = await APIInfo.switchAccountLocal(acc.id);
+      await accountStore.fetchAccounts(true);
+      showToast(
+        `已写入 Windsurf 本地登录态：${target || acc.email || "目标账号"}`,
+        "success",
+      );
+    } catch (e) {
+      showErrorToast(e, "写入 Windsurf 登录态失败");
+    }
+  };
+
+  const isAccountSwitching = (id: string) =>
+    mitmStore.switchLoading && mitmStore.switchTargetAccountId === id;
+
+  const isAccountPinned = (acc: models.Account) =>
+    settingsStore.settings?.manual_pin_enabled === true &&
+    settingsStore.settings?.manual_pin_account_id === acc.id;
+
+  const isAccountInRotationPool = (acc: models.Account) =>
+    settingsStore.settings?.rotation_pool_enabled === true &&
+    (settingsStore.settings?.rotation_pool_account_ids || []).includes(acc.id);
+
+  const rotationPoolActive = () =>
+    settingsStore.settings?.rotation_pool_enabled === true;
+
+  const handleUnpinFromCard = async () => {
+    try {
+      await APIInfo.unpinManualAccount();
+      await settingsStore.fetchSettings(true);
+      showToast("已解锁，自动切换已恢复", "success");
+    } catch (e) {
+      showErrorToast(e, "解锁失败");
+    }
+  };
+
+  const handleTogglePoolMember = async (acc: models.Account) => {
+    const s = settingsStore.settings;
+    if (!s) return;
+    const ids = [...(s.rotation_pool_account_ids || [])];
+    const idx = ids.indexOf(acc.id);
+    const adding = idx < 0;
+    if (adding) ids.push(acc.id);
+    else ids.splice(idx, 1);
+    try {
+      await APIInfo.updateSettings({
+        ...s,
+        rotation_pool_account_ids: ids,
+      } as models.Settings);
+      await settingsStore.fetchSettings(true);
+      showToast(
+        adding ? `已加入轮换池: ${acc.email}` : `已移出轮换池: ${acc.email}`,
+        "success",
+      );
+    } catch (e) {
+      showErrorToast(e, "修改池成员失败");
+    }
+  };
+
+  const copyApiKey = async (acc: models.Account) => {
+    const key = String(acc.windsurf_api_key || "").trim();
+    if (!key) {
+      showToast("该账号未配置 API Key", "warning");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(key);
+      const short =
+        key.length > 16 ? `${key.slice(0, 12)}…${key.slice(-4)}` : key;
+      showToast(`已复制 ${short}`, "success");
+    } catch (e) {
+      showErrorToast(e, "复制失败");
+    }
+  };
+
+  const planGroupCount = useMemo(() => {
+    if (!planGroupFilter) return 0;
+    return accountAgg.counts[planGroupFilter as SwitchPlanTone] ?? 0;
+  }, [planGroupFilter, accountAgg]);
+
+  const planGroupOptions = useMemo(
+    () => [
+      { value: "" as string | number, label: "按套餐操作…" },
+      ...SWITCH_PLAN_FILTER_TONES.map((tone) => ({
+        value: tone as string | number,
+        label: `${PLAN_TONE_LABELS[tone] ?? tone} (${
+          accountAgg.counts[tone as SwitchPlanTone] ?? 0
+        })`,
+      })),
+    ],
+    [accountAgg],
+  );
+
+  const handleDeleteByPlanGroup = async () => {
+    const tone = planGroupFilter;
+    if (!tone) {
+      showToast("请先选择套餐类型", "warning");
+      return;
+    }
+    const cnt = planGroupCount;
+    if (cnt === 0) {
+      showToast(`没有 ${PLAN_TONE_LABELS[tone] ?? tone} 类型的账号`, "info");
+      return;
+    }
+    const label = PLAN_TONE_LABELS[tone] ?? tone;
+    const ok = await confirmDialog(
+      `将永久删除所有「${label}」套餐的 ${cnt} 个账号，不可恢复。`,
+      { confirmText: "删除", cancelText: "取消", destructive: true },
+    );
+    if (!ok) return;
+    try {
+      const n = await APIInfo.deleteAccountsByGroup(tone);
+      await accountStore.fetchAccounts(true);
+      setPlanGroupFilter("");
+      showToast(`已删除 ${n} 个「${label}」账号`, "success");
+    } catch (e) {
+      showErrorToast(e, "删除失败");
+    }
+  };
+
+  const handleExportByPlanGroup = async () => {
+    const tone = planGroupFilter;
+    if (!tone) {
+      showToast("请先选择套餐类型", "warning");
+      return;
+    }
+    const label = PLAN_TONE_LABELS[tone] ?? tone;
+    try {
+      const filePath = await APIInfo.exportAccountsByGroup(tone);
+      showToast(
+        `「${label}」的 ${planGroupCount} 个账号已导出到：\n${filePath}`,
+        "success",
+        6000,
+      );
+    } catch (e) {
+      showErrorToast(e, "导出失败");
+    }
+  };
+
+  // 顶部「批量管理」dropdown
+  const bulkActionItems: DropdownItem[] = [
+    {
+      label: "刷新所有凭证",
+      icon: KeyRound,
+      onClick: () => void handleRefreshTokens(),
+      disabled:
+        accountStore.actionLoading || accountStore.accounts.length === 0,
+      hint: "JWT",
+    },
+    {
+      label: "同步所有额度",
+      icon: BarChart3,
+      onClick: () => void handleRefreshAllQuotas(),
+      disabled:
+        accountStore.actionLoading || accountStore.accounts.length === 0,
+      hint: "Quota",
+    },
+    { type: "divider" },
+    {
+      label: "清理过期账号",
+      icon: Trash2,
+      onClick: () => void handleCleanExpired(),
+      disabled: accountStore.accounts.length === 0,
+    },
+    {
+      label: `删除免费账号${
+        freePlanAccountCount ? ` (${freePlanAccountCount})` : ""
+      }`,
+      icon: UserX,
+      onClick: () => void handleDeleteFreePlans(),
+      danger: true,
+      disabled: freePlanAccountCount === 0,
+    },
+  ];
+
+  // 卡片右上角「⋯」dropdown
+  const accountCardMenuItems = (acc: models.Account): DropdownItem[] => {
+    const items: DropdownItem[] = [
+      {
+        label: "刷新此账号额度",
+        icon: RefreshCcw,
+        onClick: () => void handleRefreshOneQuota(acc.id, acc.email),
+        disabled: isAccountCardRefreshing(acc.id) || isAccountSwitching(acc.id),
+      },
+    ];
+    if (hasApiKey(acc)) {
+      items.push({
+        label: "复制 API Key",
+        icon: KeyRound,
+        onClick: () => void copyApiKey(acc),
+      });
+    }
+    if (rotationPoolActive()) {
+      items.push({
+        label: isAccountInRotationPool(acc)
+          ? "移出轮换池"
+          : "加入轮换池",
+        icon: Shuffle,
+        onClick: () => void handleTogglePoolMember(acc),
+      });
+    }
+    if (isAccountPinned(acc)) {
+      items.push({
+        label: "解除锁定",
+        icon: Lock,
+        onClick: () => void handleUnpinFromCard(),
+        hint: "Pin",
+      });
+    }
+    items.push({ type: "divider" });
+    items.push({
+      label: "移除此账号",
+      icon: Trash2,
+      onClick: () => void handleDelete(acc.id),
+      danger: true,
+      disabled: isAccountSwitching(acc.id),
+    });
+    return items;
+  };
+
+  // 空状态 onboarding 跳转
+  const goRelay = () => mainView.setActiveTab("Relay");
+  const handleStepImport = () => setShowImportModal(true);
+  const handleStepEnableMitm = () => mainView.setActiveTab("Dashboard");
+  const handleStepFinish = () => mainView.setActiveTab("Dashboard");
+
   return (
     <div className="p-6 md:p-8 flex flex-1 flex-col max-w-6xl mx-auto w-full min-h-0">
-      <h1 className="text-[28px] sm:text-[32px] font-bold tracking-tight">
-        {PRIMARY_POOL_LABEL}
-      </h1>
-      <p className="mt-2 text-[13px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
-        前端已切换到 React。该 view 计划在 Day 3 完整迁移。
+      {/* ── 顶部工具栏 ── */}
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-5 shrink-0">
+        <div className="min-w-0">
+          <h1 className="text-[28px] sm:text-[32px] font-bold tracking-tight">
+            {PRIMARY_POOL_LABEL}
+          </h1>
+          <p className="text-[13px] text-ios-textSecondary dark:text-ios-textSecondaryDark mt-1 leading-relaxed max-w-[640px]">
+            粘贴 API Key / JWT / 邮箱密码即可一键入池。导入完成后，MITM 代理会自动接管 IDE
+            流量并按额度无感切号。
+          </p>
+          {/* F7-REMOVAL: 整行 <F7Banner/> 删除 */}
+          <F7Banner variant="compact" />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 justify-end">
+          <button
+            type="button"
+            className="no-drag-region inline-flex items-center gap-1.5 px-5 py-2.5 bg-gradient-to-b from-[#3b82f6] to-ios-blue text-white rounded-full font-semibold text-[14px] ios-btn shadow-md ring-1 ring-black/5 whitespace-nowrap"
+            onClick={() => setShowImportModal(true)}
+          >
+            <Plus className="w-[18px] h-[18px]" strokeWidth={2.5} />
+            批量导入
+          </button>
+          <button
+            type="button"
+            className="no-drag-region inline-flex items-center gap-1.5 px-4 py-2.5 bg-ios-blue/10 text-ios-blue dark:text-blue-300 rounded-full font-semibold text-[14px] ios-btn hover:bg-ios-blue/15 transition-colors disabled:opacity-50"
+            disabled={
+              mitmStore.switchLoading || !mitmStore.status?.pool_status?.length
+            }
+            title={
+              mitmStore.status?.pool_status?.length
+                ? "手动切到 MITM 号池中下一席位"
+                : "MITM 号池为空，先导入带 API Key 的账号"
+            }
+            onClick={handleSwitchNextSeat}
+          >
+            <ArrowRightLeft
+              className={`w-[18px] h-[18px] ${
+                mitmStore.switchLoading && !mitmStore.switchTargetAccountId
+                  ? "animate-pulse"
+                  : ""
+              }`}
+              strokeWidth={2.5}
+            />
+            下一席位
+          </button>
+          <IDropdownMenu
+            items={bulkActionItems}
+            align="right"
+            width="w-60"
+            triggerLabel="批量管理"
+            triggerIcon={MoreHorizontal}
+            disabled={accountStore.accounts.length === 0}
+            triggerTitle="批量管理：全量刷新 / 同步 / 清理"
+          />
+        </div>
+      </div>
+
+      {/* ── plan tabs ── */}
+      <div className="flex items-center gap-2 mb-6 overflow-x-auto no-scrollbar shrink-0 pb-1">
+        {tabsList.map((tab) => {
+          const active = activeTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              className={`no-drag-region flex items-center gap-2 px-4 py-2 rounded-full font-bold text-[14px] transition-all whitespace-nowrap ${
+                active
+                  ? "bg-ios-text text-white dark:bg-white dark:text-black shadow-md"
+                  : "bg-black/5 dark:bg-white/5 text-ios-textSecondary hover:bg-black/10 dark:hover:bg-white/10"
+              }`}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.label}
+              <span
+                className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                  active
+                    ? "bg-white/20 dark:bg-black/10"
+                    : "bg-black/5 dark:bg-white/10"
+                }`}
+              >
+                {tab.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── quick filter chips ── */}
+      {accountStore.accounts.length > 0 ? (
+        <div className="mb-5 flex flex-wrap items-center gap-2 shrink-0">
+          {quickFilterOptions.map((item) => {
+            const active = quickFilter === item.key;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                className={`no-drag-region inline-flex items-center gap-2 rounded-full px-3.5 py-2 text-[12px] font-bold transition-colors ${
+                  active
+                    ? "bg-ios-blue text-white shadow-sm"
+                    : "bg-black/[0.04] text-ios-textSecondary hover:bg-black/[0.08] dark:bg-white/[0.05] dark:text-ios-textSecondaryDark dark:hover:bg-white/[0.1]"
+                }`}
+                onClick={() => setQuickFilter(item.key)}
+              >
+                <span>{item.label}</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-black ${
+                    active
+                      ? "bg-white/20 text-white"
+                      : "bg-black/[0.05] text-ios-textSecondary dark:bg-white/[0.08] dark:text-ios-textSecondaryDark"
+                  }`}
+                >
+                  {item.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {/* ── 搜索 + 排序 + 分组操作 ── */}
+      {accountStore.accounts.length > 0 ? (
+        <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 mb-6 shrink-0 max-w-6xl">
+          <div className="relative flex-1 min-w-[220px]">
+            <Search
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-ios-textSecondary opacity-60 pointer-events-none"
+              strokeWidth={2.4}
+            />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              type="search"
+              placeholder="搜索邮箱、昵称、备注、计划…"
+              className="no-drag-region w-full pl-11 pr-10 py-2.5 rounded-[14px] bg-black/[0.04] border border-black/[0.06] text-[14px] outline-none focus:ring-2 focus:ring-ios-blue/25 dark:bg-white/[0.06] dark:border-white/[0.08] dark:text-gray-100"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                className="no-drag-region absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full hover:bg-black/10 text-ios-textSecondary"
+                onClick={() => setSearchQuery("")}
+              >
+                <X className="w-4 h-4 mx-auto" strokeWidth={2.5} />
+              </button>
+            ) : null}
+          </div>
+          <ISelectSheet
+            modelValue={accountSort}
+            onValueChange={(v) =>
+              setAccountSort(v as "group" | "name" | "quota")
+            }
+            options={ACCOUNT_SORT_OPTIONS}
+            title="账号排序方式"
+            width="w-44"
+          />
+          <div
+            className="flex items-center gap-1.5 sm:ml-auto"
+            title="先选套餐类型，再按删除 / 导出该组"
+          >
+            <ISelectSheet
+              modelValue={planGroupFilter}
+              onValueChange={(v) => setPlanGroupFilter(String(v))}
+              options={planGroupOptions}
+              title="选择套餐类型"
+              width="w-44"
+            />
+            {planGroupFilter ? (
+              <>
+                <button
+                  type="button"
+                  className="no-drag-region inline-flex items-center gap-1 px-3 py-2 bg-ios-red/10 text-ios-red rounded-full font-semibold text-[12px] ios-btn hover:bg-ios-red/20 transition-colors"
+                  title={`删除所有「${
+                    PLAN_TONE_LABELS[planGroupFilter] ?? planGroupFilter
+                  }」账号`}
+                  onClick={handleDeleteByPlanGroup}
+                >
+                  <Trash2 className="w-[14px] h-[14px]" strokeWidth={2.5} />
+                  删除该组
+                </button>
+                <button
+                  type="button"
+                  className="no-drag-region inline-flex items-center gap-1 px-3 py-2 bg-violet-500/10 text-violet-700 dark:text-violet-300 rounded-full font-semibold text-[12px] ios-btn hover:bg-violet-500/20 transition-colors"
+                  title={`导出「${
+                    PLAN_TONE_LABELS[planGroupFilter] ?? planGroupFilter
+                  }」账号`}
+                  onClick={handleExportByPlanGroup}
+                >
+                  <Download className="w-[14px] h-[14px]" strokeWidth={2.5} />
+                  导出该组
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── 整页骨架 / 空状态 / 筛选无结果 / 卡片网格 ── */}
+      {!accountStore.hasLoadedOnce && accountStore.accounts.length === 0 ? (
+        <PageLoadingSkeleton variant="accounts" className="flex-1" />
+      ) : accountStore.accounts.length === 0 ? (
+        <EmptyState
+          onImport={handleStepImport}
+          onEnableMitm={handleStepEnableMitm}
+          onFinish={handleStepFinish}
+          onRelay={goRelay}
+        />
+      ) : displayAccounts.length === 0 ? (
+        <div className="flex flex-col items-center justify-center flex-1 py-16 text-ios-textSecondary">
+          <Search className="w-12 h-12 opacity-50 mb-4" />
+          <p className="text-[17px] font-medium">
+            {searchQuery.trim() ? "未找到匹配的账号" : "当前筛选下没有账号"}
+          </p>
+          {hasListFilters ? (
+            <button
+              className="mt-3 text-[14px] font-semibold text-ios-blue ios-btn"
+              onClick={clearListFilters}
+            >
+              清除筛选
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="pb-10 min-h-0">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 auto-rows-max">
+            {pagedAccounts.map((acc) => {
+              if (isAccountCardRefreshing(acc.id)) {
+                return <AccountCardSkeleton key={acc.id} />;
+              }
+              const meta = getCardStateMeta(acc);
+              const online = isCurrentOnline(acc);
+              const boundCount = getBoundSessionCount(acc);
+              const pinned = isAccountPinned(acc);
+              const inPool = isAccountInRotationPool(acc);
+              const switching = isAccountSwitching(acc.id);
+              return (
+                <div
+                  key={acc.id}
+                  className={[
+                    "bg-white dark:bg-[#1C1C1E] rounded-[22px] flex flex-col relative overflow-hidden transition-all duration-300 ease-out hover:shadow-lg hover:-translate-y-0.5",
+                    online
+                      ? "border-2 border-ios-green/40 dark:border-ios-greenDark/40 shadow-[0_0_0_1px_rgba(52,199,89,0.12)]"
+                      : "border border-black/[0.05] dark:border-white/[0.08] shadow-sm",
+                  ].join(" ")}
+                >
+                  <div
+                    className={`absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r opacity-95 ${getPlanAccentClass(
+                      acc,
+                    )}`}
+                  />
+                  <div className="relative z-10 flex h-full flex-col p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-[#F0F5FF] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-ios-blue dark:bg-ios-blue/20">
+                          {acc.plan_name || "unknown"}
+                        </span>
+                        <span
+                          className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-bold tracking-[0.14em] text-gray-800 dark:text-gray-100 ${PANEL_TONE_CLASS[meta.tone]}`}
+                        >
+                          {meta.label}
+                        </span>
+                        {boundCount > 0 ? (
+                          <span
+                            className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-violet-500/10 border border-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300"
+                            title={`${boundCount} 个会话绑定到此账号`}
+                          >
+                            {boundCount} 会话
+                          </span>
+                        ) : null}
+                        {pinned ? (
+                          <span
+                            className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300"
+                            title="已锁定 — 自动切换通道全部暂停。点击右侧按钮解锁。"
+                          >
+                            🔒 已锁定
+                          </span>
+                        ) : null}
+                        {inPool ? (
+                          <span
+                            className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-violet-500/15 border border-violet-500/30 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300"
+                            title="此账号在轮换池内，会被定时切 + 额度耗尽时优先选中"
+                          >
+                            🔁 池内
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <button
+                          type="button"
+                          className="no-drag-region inline-flex items-center gap-1 rounded-full bg-violet-500/10 px-3 py-1.5 text-[12px] font-bold text-violet-600 dark:text-violet-300 shadow-sm transition-colors hover:bg-violet-500/15 ios-btn disabled:opacity-50"
+                          disabled={switching}
+                          title="把这个账号写入 Windsurf 本地登录态(IDE 看到此账号登录)"
+                          onClick={() => handleLoginToWindsurf(acc)}
+                        >
+                          <LogIn className="h-[14px] w-[14px]" strokeWidth={2.5} />
+                          登录
+                        </button>
+                        {hasApiKey(acc) ? (
+                          <button
+                            type="button"
+                            className={[
+                              "no-drag-region inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-bold shadow-sm transition-colors ios-btn disabled:opacity-45",
+                              online
+                                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 cursor-default"
+                                : "bg-ios-blue/10 text-ios-blue dark:text-blue-300 hover:bg-ios-blue/15",
+                            ].join(" ")}
+                            disabled={
+                              !hasApiKey(acc) || online || mitmStore.switchLoading
+                            }
+                            title={online ? "当前活跃席位" : "手动切到这个 MITM 账号"}
+                            onClick={() => handleSwitchMitmToAccount(acc)}
+                          >
+                            {!online ? (
+                              <ArrowRightLeft
+                                className={`h-[14px] w-[14px] ${switching ? "animate-pulse" : ""}`}
+                                strokeWidth={2.5}
+                              />
+                            ) : (
+                              <ShieldCheck className="h-[14px] w-[14px]" strokeWidth={2.5} />
+                            )}
+                            {online ? "活跃" : "切到此号"}
+                          </button>
+                        ) : null}
+                        <IDropdownMenu
+                          items={accountCardMenuItems(acc)}
+                          align="right"
+                          width="w-52"
+                          compact
+                          triggerTitle="更多操作"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 min-w-0">
+                      <div
+                        className="truncate text-[24px] font-bold tracking-tight text-ios-text dark:text-ios-textDark"
+                        title={acc.nickname || acc.email || acc.id}
+                      >
+                        {acc.nickname || acc.email || acc.id.slice(0, 12)}
+                      </div>
+                      <div
+                        className="mt-2 truncate text-[13px] font-medium text-gray-600 dark:text-gray-300"
+                        title={acc.email || "未填写邮箱"}
+                      >
+                        {acc.email || "未填写邮箱"}
+                      </div>
+                      {acc.remark ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <span
+                            className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ios-textSecondary dark:bg-white/[0.08] dark:text-ios-textSecondaryDark"
+                            title={acc.remark}
+                          >
+                            {acc.remark}
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <div className="rounded-[18px] border border-black/[0.05] bg-black/[0.025] p-3 dark:border-white/[0.06] dark:bg-white/[0.04]">
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+                          <CalendarDays className="h-3.5 w-3.5 opacity-70" />
+                          到期时间
+                        </div>
+                        <div className="mt-2 text-[13px] font-semibold leading-snug text-ios-text dark:text-ios-textDark">
+                          {acc.subscription_expires_at
+                            ? formatDateTimeAsiaShanghai(
+                                acc.subscription_expires_at,
+                              )
+                            : "待同步"}
+                        </div>
+                      </div>
+
+                      <div className="rounded-[18px] border border-black/[0.05] bg-black/[0.025] p-3 dark:border-white/[0.06] dark:bg-white/[0.04]">
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+                          <Clock className="h-3.5 w-3.5 opacity-70" />
+                          额度同步
+                        </div>
+                        <div className="mt-2 text-[13px] font-semibold leading-snug text-ios-text dark:text-ios-textDark">
+                          {acc.last_quota_update
+                            ? formatSyncTimeLine(acc.last_quota_update)
+                            : "未同步"}
+                        </div>
+                        {acc.last_quota_update ? (
+                          <div
+                            className="mt-1 truncate text-[10px] text-gray-500 dark:text-gray-400"
+                            title={formatDateTimeAsiaShanghai(
+                              acc.last_quota_update,
+                            )}
+                          >
+                            {formatDateTimeAsiaShanghai(acc.last_quota_update)}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 rounded-[18px] border border-black/[0.05] bg-black/[0.025] p-4 dark:border-white/[0.06] dark:bg-white/[0.04]">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-gray-800 dark:text-gray-200">
+                          <span>日额度</span>
+                          <span>{acc.daily_remaining || "—"}</span>
+                        </div>
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-white/10">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ease-out ${getQuotaColor(
+                              acc.daily_remaining || "",
+                            )}`}
+                            style={{ width: parseQuotaWidth(acc.daily_remaining || "") }}
+                          />
+                        </div>
+                        {acc.daily_reset_at ? (
+                          <div
+                            className="truncate pt-1 text-[10px] font-medium text-gray-500 dark:text-gray-400"
+                            title={formatDateTimeAsiaShanghai(acc.daily_reset_at)}
+                          >
+                            {formatResetCountdownZH(acc.daily_reset_at)}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-4 space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-gray-800 dark:text-gray-200">
+                          <span>周额度</span>
+                          <span>
+                            {acc.weekly_remaining ||
+                              (isWeeklyBlockedDisplay(acc) ? "官方缺失" : "—")}
+                          </span>
+                        </div>
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-white/10">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ease-out ${getQuotaColor(
+                              acc.weekly_remaining || "",
+                            )}`}
+                            style={{ width: parseQuotaWidth(acc.weekly_remaining || "") }}
+                          />
+                        </div>
+                        {acc.weekly_reset_at ? (
+                          <div
+                            className="truncate pt-1 text-[10px] font-medium text-gray-500 dark:text-gray-400"
+                            title={formatDateTimeAsiaShanghai(acc.weekly_reset_at)}
+                          >
+                            {formatResetCountdownZH(acc.weekly_reset_at)}
+                          </div>
+                        ) : null}
+                        {isWeeklyBlockedDisplay(acc) ? (
+                          <div className="pt-1 text-[10px] font-semibold text-rose-600 dark:text-rose-300">
+                            官方未返回周额度，按不可用处理
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {totalPages > 1 || displayAccounts.length > 30 ? (
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-[12px] text-ios-textSecondary dark:text-ios-textSecondaryDark font-medium">
+                共 {displayAccounts.length} 条，第 {currentPage}/{totalPages} 页
+              </div>
+              <div className="flex items-center gap-2">
+                <ISelectSheet
+                  modelValue={pageSize}
+                  onValueChange={(v) => setPageSize(Number(v))}
+                  options={PAGE_SIZE_OPTIONS}
+                  title="每页显示"
+                  width="w-28"
+                />
+                <button
+                  type="button"
+                  className="no-drag-region rounded-lg border border-black/[0.06] bg-white px-3 py-1.5 text-[12px] font-bold transition hover:bg-black/[0.04] disabled:opacity-40 dark:border-white/[0.08] dark:bg-white/[0.06]"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                >
+                  上一页
+                </button>
+                {paginationRange.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className={`no-drag-region h-8 min-w-[32px] rounded-lg text-[12px] font-bold transition ${
+                      p === currentPage
+                        ? "bg-ios-blue text-white shadow-sm"
+                        : "border border-black/[0.06] bg-white hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.06]"
+                    }`}
+                    onClick={() => setCurrentPage(p)}
+                  >
+                    {p}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="no-drag-region rounded-lg border border-black/[0.06] bg-white px-3 py-1.5 text-[12px] font-bold transition hover:bg-black/[0.04] disabled:opacity-40 dark:border-white/[0.08] dark:bg-white/[0.06]"
+                  disabled={currentPage >= totalPages}
+                  onClick={() =>
+                    setCurrentPage(Math.min(totalPages, currentPage + 1))
+                  }
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      <ImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+      />
+    </div>
+  );
+}
+
+// ── 空状态 onboarding ────────────────────────────────────────────────
+interface EmptyStateProps {
+  onImport: () => void;
+  onEnableMitm: () => void;
+  onFinish: () => void;
+  onRelay: () => void;
+}
+
+function EmptyState({
+  onImport,
+  onEnableMitm,
+  onFinish,
+  onRelay,
+}: EmptyStateProps) {
+  return (
+    <div className="flex flex-col items-center justify-center flex-1 text-ios-textSecondary py-12 ios-page-enter">
+      <div className="relative mb-8">
+        <div className="w-32 h-32 rounded-[32px] bg-gradient-to-br from-ios-blue/15 to-violet-500/15 dark:from-ios-blue/25 dark:to-violet-500/25 flex items-center justify-center shadow-[0_12px_32px_rgba(37,99,235,0.12)]">
+          <Users
+            className="w-14 h-14 text-ios-blue dark:text-blue-300"
+            strokeWidth={1.8}
+          />
+        </div>
+        <div className="absolute -bottom-2 -right-2 w-12 h-12 rounded-2xl bg-white dark:bg-[#1C1C1E] flex items-center justify-center shadow-md ring-2 ring-white/80 dark:ring-black/80">
+          <Sparkles className="w-7 h-7 text-emerald-500" strokeWidth={2.4} />
+        </div>
+      </div>
+
+      <h2 className="text-[24px] font-bold text-ios-text dark:text-ios-textDark mb-2 text-center">
+        三步开始无感切号
+      </h2>
+      <p className="max-w-[480px] text-center text-[14px] leading-relaxed text-ios-textSecondary dark:text-ios-textSecondaryDark mb-8 px-4">
+        把账号导入号池，Windsurf Tools 会接管 Cascade 流量并按额度自动切号 ——
+        无需修改 IDE，不打断对话。
       </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 max-w-[820px] w-full px-4 mb-7">
+        <button
+          type="button"
+          className="no-drag-region group relative rounded-[22px] border border-ios-blue/25 bg-gradient-to-br from-ios-blue/[0.08] to-violet-500/[0.06] dark:from-ios-blue/[0.18] dark:to-violet-500/[0.12] p-5 text-left ios-btn shadow-[0_10px_24px_-12px_rgba(37,99,235,0.4)] hover:-translate-y-0.5 hover:shadow-[0_16px_30px_-12px_rgba(37,99,235,0.4)] transition-all"
+          onClick={onImport}
+        >
+          <div className="flex items-center gap-2.5 mb-2">
+            <div className="w-8 h-8 rounded-full bg-ios-blue text-white flex items-center justify-center text-[14px] font-black shadow-md shadow-ios-blue/40">
+              1
+            </div>
+            <span className="text-[15px] font-bold text-ios-text dark:text-ios-textDark">
+              批量导入
+            </span>
+          </div>
+          <p className="text-[12px] text-gray-600 dark:text-gray-300 leading-relaxed">
+            粘贴 API Key / JWT / 邮箱密码 / Refresh Token，自动识别格式并入池。
+          </p>
+          <div className="mt-3 inline-flex items-center gap-1 text-[12px] font-bold text-ios-blue group-hover:gap-1.5 transition-all">
+            点击开始
+            <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.5} />
+          </div>
+        </button>
+
+        <button
+          type="button"
+          className="no-drag-region group relative rounded-[22px] border border-violet-500/20 bg-white/70 dark:bg-white/[0.04] p-5 text-left ios-btn hover:-translate-y-0.5 hover:bg-violet-500/[0.04] hover:border-violet-500/30 transition-all"
+          onClick={onEnableMitm}
+        >
+          <div className="flex items-center gap-2.5 mb-2">
+            <div className="w-8 h-8 rounded-full bg-violet-500/15 text-violet-600 dark:text-violet-300 flex items-center justify-center text-[14px] font-black">
+              2
+            </div>
+            <span className="text-[15px] font-bold text-ios-text dark:text-ios-textDark">
+              启用 MITM 代理
+            </span>
+          </div>
+          <p className="text-[12px] text-gray-500 dark:text-gray-400 leading-relaxed">
+            到总览页一键完成 CA 证书 + Hosts 配置，打开代理后号池立即接管 IDE 流量。
+          </p>
+          <div className="mt-3 inline-flex items-center gap-1 text-[12px] font-bold text-violet-600 dark:text-violet-300 group-hover:gap-1.5 transition-all">
+            前往总览
+            <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.5} />
+          </div>
+        </button>
+
+        <button
+          type="button"
+          className="no-drag-region group relative rounded-[22px] border border-emerald-500/20 bg-white/70 dark:bg-white/[0.04] p-5 text-left ios-btn hover:-translate-y-0.5 hover:bg-emerald-500/[0.04] hover:border-emerald-500/30 transition-all"
+          onClick={onFinish}
+        >
+          <div className="flex items-center gap-2.5 mb-2">
+            <div className="w-8 h-8 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 flex items-center justify-center text-[14px] font-black">
+              3
+            </div>
+            <span className="text-[15px] font-bold text-ios-text dark:text-ios-textDark">
+              开始使用
+            </span>
+          </div>
+          <p className="text-[12px] text-gray-500 dark:text-gray-400 leading-relaxed">
+            Cascade 对话自动按额度无感切号，可选启用轮换池 + Clash 加速。
+          </p>
+          <div className="mt-3 inline-flex items-center gap-1 text-[12px] font-bold text-emerald-600 dark:text-emerald-300 group-hover:gap-1.5 transition-all">
+            查看仪表盘
+            <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.5} />
+          </div>
+        </button>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <button
+          type="button"
+          className="no-drag-region inline-flex items-center gap-2 rounded-full bg-gradient-to-b from-[#3b82f6] to-ios-blue px-6 py-3 text-[14px] font-bold text-white transition-all hover:scale-[1.02] active:scale-[0.98] ios-btn shadow-md shadow-ios-blue/25"
+          onClick={onImport}
+        >
+          <Plus className="h-4 w-4" strokeWidth={2.4} />
+          导入第一个账号
+        </button>
+        <button
+          type="button"
+          className="no-drag-region inline-flex items-center gap-2 rounded-full border border-black/[0.06] bg-white/80 px-4 py-3 text-[13px] font-bold text-gray-700 transition-colors hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-200 dark:hover:bg-white/[0.08] ios-btn"
+          onClick={onRelay}
+        >
+          <ChevronRight className="h-4 w-4" strokeWidth={2.4} />
+          直连 OpenAI Relay
+        </button>
+      </div>
     </div>
   );
 }
