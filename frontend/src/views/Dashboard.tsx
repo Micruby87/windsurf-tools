@@ -21,6 +21,7 @@ import F7Banner from "../components/F7Banner";
 import MitmPanel from "../components/MitmPanel";
 import PageLoadingSkeleton from "../components/common/PageLoadingSkeleton";
 import SkeletonOverlay from "../components/common/SkeletonOverlay";
+// F7-REMOVAL: useSmartFriend 仅在 F7 模式下生效，发布前一并删除
 import { useSmartFriend } from "../hooks/useSmartFriend";
 import { useAccountStore } from "../stores/useAccountStore";
 import { useMainViewStore } from "../stores/useMainViewStore";
