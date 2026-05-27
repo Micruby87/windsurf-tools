@@ -6,6 +6,8 @@ import {
   Layers,
   Pencil,
   Plus,
+  Power,
+  RefreshCcw,
   Save,
   Search,
   Trash2,
@@ -43,6 +45,7 @@ const editDraft = ref<{ nickname: string; remark: string; status: string }>({
 });
 const savingId = ref<string | null>(null);
 const deletingId = ref<string | null>(null);
+const refreshingModelsId = ref<string | null>(null);
 
 onMounted(() => {
   void providerStore.ensureAccountsLoaded();
@@ -257,6 +260,54 @@ const handleRefresh = async () => {
     showToast(`刷新失败: ${String(e)}`, "error");
   }
 };
+
+// 阶段 2: 卡片 active 开关 / active model 下拉 / 拉模型列表
+const toggleActivated = async (acc: ProviderAccountModel) => {
+  if (savingId.value) return;
+  savingId.value = acc.id;
+  try {
+    const next: ProviderAccountModel = {
+      ...acc,
+      activated: !acc.activated,
+    };
+    await providerStore.updateAccount(next);
+    showToast(next.activated ? "已激活" : "已取消激活", "success");
+  } catch (e: unknown) {
+    showToast(`切换激活态失败: ${String(e)}`, "error");
+  } finally {
+    savingId.value = null;
+  }
+};
+
+const setActiveModel = async (acc: ProviderAccountModel, model: string) => {
+  if (savingId.value) return;
+  if ((acc.active_model || "") === model) return;
+  savingId.value = acc.id;
+  try {
+    const next: ProviderAccountModel = {
+      ...acc,
+      active_model: model,
+    };
+    await providerStore.updateAccount(next);
+  } catch (e: unknown) {
+    showToast(`设置 active_model 失败: ${String(e)}`, "error");
+  } finally {
+    savingId.value = null;
+  }
+};
+
+const refreshModels = async (acc: ProviderAccountModel) => {
+  if (refreshingModelsId.value) return;
+  refreshingModelsId.value = acc.id;
+  try {
+    await providerStore.refreshModels(acc.id);
+    showToast("model 列表已更新", "success");
+  } catch (e: unknown) {
+    showToast(`拉 model 列表失败: ${String(e)}`, "error");
+  } finally {
+    refreshingModelsId.value = null;
+  }
+};
 </script>
 
 <template>
@@ -435,6 +486,91 @@ const handleRefresh = async () => {
           >
             <span class="font-bold uppercase tracking-[0.16em]">Remark</span>
             <span class="ml-1 line-clamp-2">{{ acc.remark }}</span>
+          </div>
+
+          <!-- 阶段 2: 路由调度区(激活开关 + active_model 下拉) -->
+          <div
+            class="rounded-[14px] border border-dashed border-violet-500/20 bg-violet-500/[0.04] px-3 py-2.5 space-y-2"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <span
+                class="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-ios-textSecondary dark:text-ios-textSecondaryDark"
+              >
+                <Power class="h-3 w-3" stroke-width="2.6" />
+                提供商接管
+              </span>
+              <button
+                type="button"
+                class="ios-btn flex h-6 items-center gap-1 rounded-full px-2.5 text-[10px] font-bold transition-all"
+                :class="
+                  acc.activated
+                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-black/[0.06] text-ios-textSecondary dark:bg-white/[0.08] dark:text-ios-textSecondaryDark'
+                "
+                :disabled="savingId === acc.id"
+                @click="toggleActivated(acc)"
+              >
+                {{ acc.activated ? "已激活" : "未激活" }}
+              </button>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <select
+                :value="acc.active_model || ''"
+                class="flex-1 min-w-0 rounded-[10px] border border-black/[0.08] bg-white px-2 py-1.5 text-[11px] font-mono outline-none focus:border-ios-blue/60 dark:border-white/[0.08] dark:bg-white/[0.06] disabled:opacity-50"
+                :disabled="
+                  savingId === acc.id ||
+                  !(acc.models && acc.models.length)
+                "
+                @change="
+                  setActiveModel(
+                    acc,
+                    ($event.target as HTMLSelectElement).value,
+                  )
+                "
+              >
+                <option value="" disabled>
+                  {{
+                    acc.models && acc.models.length
+                      ? "选择 active model"
+                      : "未发现 model — 点右侧刷新"
+                  }}
+                </option>
+                <option
+                  v-for="m in acc.models || []"
+                  :key="m"
+                  :value="m"
+                >
+                  {{ m }}
+                </option>
+              </select>
+              <button
+                type="button"
+                class="ios-btn flex h-7 w-7 shrink-0 items-center justify-center rounded-[10px] border border-black/[0.06] bg-white/80 text-ios-textSecondary hover:text-ios-blue dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-ios-textSecondaryDark dark:hover:text-ios-blue disabled:opacity-50"
+                :disabled="refreshingModelsId === acc.id"
+                title="重新拉取 /v1/models"
+                @click="refreshModels(acc)"
+              >
+                <RefreshCcw
+                  class="h-3 w-3"
+                  :class="refreshingModelsId === acc.id ? 'animate-spin' : ''"
+                  stroke-width="2.6"
+                />
+              </button>
+            </div>
+            <div
+              v-if="acc.models_error"
+              class="text-[10px] text-rose-700 dark:text-rose-300 line-clamp-2"
+              :title="acc.models_error"
+            >
+              ↳ {{ acc.models_error }}
+            </div>
+            <div
+              v-else-if="acc.models_refreshed_at"
+              class="text-[10px] text-ios-textSecondary dark:text-ios-textSecondaryDark"
+            >
+              ↳ {{ (acc.models || []).length }} 个 model · 最近
+              {{ formatDateTimeAsiaShanghai(acc.models_refreshed_at) }}
+            </div>
           </div>
         </div>
 

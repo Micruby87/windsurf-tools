@@ -503,6 +503,11 @@ export namespace models {
 	    last_used_at?: string;
 	    used_quota?: number;
 	    total_quota?: number;
+	    activated?: boolean;
+	    active_model?: string;
+	    models?: string[];
+	    models_refreshed_at?: string;
+	    models_error?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProviderAccount(source);
@@ -521,6 +526,11 @@ export namespace models {
 	        this.last_used_at = source["last_used_at"];
 	        this.used_quota = source["used_quota"];
 	        this.total_quota = source["total_quota"];
+	        this.activated = source["activated"];
+	        this.active_model = source["active_model"];
+	        this.models = source["models"];
+	        this.models_refreshed_at = source["models_refreshed_at"];
+	        this.models_error = source["models_error"];
 	    }
 	}
 	export class Settings {

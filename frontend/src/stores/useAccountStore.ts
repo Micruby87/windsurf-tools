@@ -159,6 +159,12 @@ export interface ProviderAccountModel {
   last_used_at?: string;
   used_quota?: number;
   total_quota?: number;
+  // 阶段 2: 路由调度字段
+  activated?: boolean;
+  active_model?: string;
+  models?: string[];
+  models_refreshed_at?: string;
+  models_error?: string;
 }
 
 export interface ProviderImportItem {
@@ -242,6 +248,17 @@ export const useProviderAccountStore = defineStore("providerAccount", () => {
     await fetchAccounts(true);
   };
 
+  // 阶段 2: 拉 {base_url}/v1/models 写到 ProviderAccount.models
+  const refreshModels = async (id: string) => {
+    actionLoading.value = true;
+    try {
+      await APIInfo.refreshProviderModels(id);
+      await fetchAccounts(true);
+    } finally {
+      actionLoading.value = false;
+    }
+  };
+
   return {
     accounts,
     isLoading,
@@ -253,6 +270,7 @@ export const useProviderAccountStore = defineStore("providerAccount", () => {
     deleteAccount,
     importBatch,
     updateAccount,
+    refreshModels,
   };
 });
 

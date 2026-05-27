@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -396,7 +397,54 @@ func (a *App) ImportByProvider(items []ProviderKeyItem) []ImportResult {
 			results[idx].Error = err.Error()
 		}
 	}
+	// 入库成功的账号异步触发 model 拉取 — 不阻塞批量导入响应；
+	// 失败原因写到 ModelsError 让 UI 显示。
+	for k, err := range errs {
+		if err != nil {
+			continue
+		}
+		idx := indexMap[k]
+		if !results[idx].Success {
+			continue
+		}
+		acc := accounts[k]
+		go a.refreshProviderModelsAsync(acc.ID, acc.Provider, acc.BaseURL, acc.AuthToken)
+	}
 	return results
+}
+
+// RefreshProviderModels 手动重新拉取 model 列表(UI 卡片刷新按钮)。
+// 同步等结果返回，前端能直接显示新列表。
+func (a *App) RefreshProviderModels(id string) error {
+	if a.providerStore == nil {
+		return fmt.Errorf("provider store 未初始化")
+	}
+	acc, err := a.providerStore.Get(id)
+	if err != nil {
+		return err
+	}
+	return a.fetchAndPersistProviderModels(acc.ID, acc.Provider, acc.BaseURL, acc.AuthToken)
+}
+
+// refreshProviderModelsAsync goroutine 入口：忽略 error，已写到 store 字段。
+func (a *App) refreshProviderModelsAsync(id, provider, baseURL, token string) {
+	_ = a.fetchAndPersistProviderModels(id, provider, baseURL, token)
+}
+
+// fetchAndPersistProviderModels 拉 + 持久化的核心。出错时也写一次
+// (空 list + errMsg)，让 UI 上能看到失败原因不再瞎猜。
+func (a *App) fetchAndPersistProviderModels(id, provider, baseURL, token string) error {
+	if a.providerStore == nil {
+		return fmt.Errorf("provider store 未初始化")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	list, err := services.FetchProviderModels(ctx, nil, provider, baseURL, token)
+	if err != nil {
+		_ = a.providerStore.SetProviderModels(id, nil, err.Error())
+		return err
+	}
+	return a.providerStore.SetProviderModels(id, list, "")
 }
 
 // GetAllProviderAccounts 返回全部提供商账号(含已禁用)。

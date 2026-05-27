@@ -61,6 +61,20 @@ type ProviderAccount struct {
 	LastUsedAt string `json:"last_used_at,omitempty"`
 	UsedQuota  int    `json:"used_quota,omitempty"`
 	TotalQuota int    `json:"total_quota,omitempty"`
+
+	// ── 阶段 2 路由调度字段 ──
+	// Activated 卡片是否参与 MITM 提供商分流。同一 provider 内多张 activated
+	// 会被轮询挑选;false 时该卡片只是号池里挂着的存档，不接流量。
+	Activated bool `json:"activated,omitempty"`
+	// ActiveModel 强制重写 IDE 进来的 model 为此值(空则用 IDE 原值)。
+	// 用户从 Models 下拉里选定。
+	ActiveModel string `json:"active_model,omitempty"`
+	// Models 上次拉 {base_url}/v1/models 的结果。空数组 + 非空
+	// ModelsError 表示已尝试但失败。
+	Models []string `json:"models,omitempty"`
+	// ModelsRefreshedAt RFC3339;ModelsError 非空 = 上次拉取失败原因。
+	ModelsRefreshedAt string `json:"models_refreshed_at,omitempty"`
+	ModelsError       string `json:"models_error,omitempty"`
 }
 
 func NewProviderAccount(provider, baseURL, token, remark string) *ProviderAccount {

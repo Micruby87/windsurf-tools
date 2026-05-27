@@ -218,6 +218,10 @@ export function RefreshAllTokens() {
   return window['go']['main']['App']['RefreshAllTokens']();
 }
 
+export function RefreshProviderModels(arg1) {
+  return window['go']['main']['App']['RefreshProviderModels'](arg1);
+}
+
 export function ResetJailbreakStats() {
   return window['go']['main']['App']['ResetJailbreakStats']();
 }

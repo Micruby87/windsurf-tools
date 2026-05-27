@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 	"windsurf-tools-wails/backend/models"
 	"windsurf-tools-wails/backend/paths"
 )
@@ -428,4 +429,61 @@ func ProviderAccountsConflict(a, b models.ProviderAccount) bool {
 		return false
 	}
 	return ta == tb
+}
+
+// ── 阶段 2 路由调度专用 helpers ──
+
+// GetActivatedByProvider 返回某个 provider 下 Activated=true && status!=disabled
+// && 配置完整(base_url + auth_token)的账号列表，按 ID 排序确保跨进程稳定。
+// 阶段 2 MITM 分流：handleRequest 先按 model 头信息选 provider，再用本函数
+// 拿到候选池做轮询。
+func (s *ProviderAccountStore) GetActivatedByProvider(provider string) []models.ProviderAccount {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	target := strings.TrimSpace(strings.ToLower(provider))
+	if target == "" {
+		return nil
+	}
+	out := make([]models.ProviderAccount, 0)
+	for i := range s.accounts {
+		acc := s.accounts[i]
+		if !acc.Activated {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(acc.Status)) == "disabled" {
+			continue
+		}
+		if strings.TrimSpace(acc.BaseURL) == "" || strings.TrimSpace(acc.AuthToken) == "" {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(acc.Provider)) != target {
+			continue
+		}
+		out = append(out, acc)
+	}
+	// ID 排序：保证多个 instance / 多个 process 拿到同样顺序，轮询节奏一致
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[i].ID > out[j].ID {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out
+}
+
+// SetProviderModels 写回某账号的 /v1/models 拉取结果。
+// 失败也要写：用 errMsg 记下来供 UI 展示，避免用户不知道为啥列表是空。
+func (s *ProviderAccountStore) SetProviderModels(id string, models []string, errMsg string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.accounts {
+		if s.accounts[i].ID == id {
+			s.accounts[i].Models = models
+			s.accounts[i].ModelsError = errMsg
+			s.accounts[i].ModelsRefreshedAt = time.Now().Format(time.RFC3339)
+			return s.saveProvider()
+		}
+	}
+	return fmt.Errorf("provider account not found")
 }

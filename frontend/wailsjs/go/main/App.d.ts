@@ -112,6 +112,8 @@ export function RefreshAllQuotas():Promise<Record<string, string>>;
 
 export function RefreshAllTokens():Promise<Record<string, string>>;
 
+export function RefreshProviderModels(arg1:string):Promise<void>;
+
 export function ResetJailbreakStats():Promise<void>;
 
 export function RevealJailbreakOverrideFolder():Promise<string>;

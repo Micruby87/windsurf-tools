@@ -38,6 +38,8 @@ export const APIInfo = {
   getProviderAccount: (AppHooks as any).GetProviderAccount as (id: string) => Promise<any>,
   updateProviderAccount: (AppHooks as any).UpdateProviderAccount as (acc: any) => Promise<void>,
   deleteProviderAccount: (AppHooks as any).DeleteProviderAccount as (id: string) => Promise<void>,
+  // 阶段 2: 拉 {base_url}/v1/models 写到 ProviderAccount.models
+  refreshProviderModels: (AppHooks as any).RefreshProviderModels as (id: string) => Promise<void>,
 
   refreshAllTokens: AppHooks.RefreshAllTokens,
   refreshAllQuotas: AppHooks.RefreshAllQuotas,
