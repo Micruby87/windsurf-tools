@@ -115,6 +115,9 @@ func (a *App) initBackend() error {
 		utils.DLog("[回调] onCurrentKeyChanged 触发: key=%s... reason=%s", apiKey[:min(12, len(apiKey))], reason)
 		a.handleMitmCurrentKeyChanged(apiKey, reason)
 	})
+	// 阶段 2 提供商路由注入: 总览胶囊点亮"提供商" + chat path 时,
+	// MITM 走 cascade↔OpenAI/Anthropic/Gemini 翻译流水, 而非号池。
+	a.mitmProxy.SetRouter(&routerImpl{app: a})
 	a.openaiRelay = services.NewOpenAIRelay(a.mitmProxy, func(msg string) {
 		utils.DLog("%s", msg)
 	}, "", a.usageTracker)

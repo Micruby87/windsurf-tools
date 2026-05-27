@@ -215,35 +215,14 @@ const activeKey = computed(
 const relayRunning = computed(() => relayStore.status?.running === true);
 
 // ── 总览 SWITCH 路由模式 + 提供商汇总 ──
-// Phase 1:仅持久化 + UI 展示。MITM/Relay 实际仍走 windsurf 号池。
-// Phase 2 起接入协议转换层后,这里会真实分流。
+// providers 模式下,MITM 拦截 windsurf IDE 的 cascade 请求, 翻译为
+// OpenAI/Anthropic/Gemini 协议发给已激活的 ProviderAccount, 再把响应翻回
+// cascade frame 给 IDE。需要至少一张激活卡且设置了 active_model 才能跑通。
+// 胶囊本体放在 Sidebar 健康提示下方;这里只读 routeMode 控制概览面板进出动画。
 const routeMode = computed<"pool" | "providers">(() => {
   const v = (settingsStore.settings as any)?.mitm_route_mode;
   return v === "providers" ? "providers" : "pool";
 });
-
-const switchingRouteMode = ref(false);
-const setRouteMode = async (target: "pool" | "providers") => {
-  if (routeMode.value === target || switchingRouteMode.value) return;
-  switchingRouteMode.value = true;
-  try {
-    const next = {
-      ...(settingsStore.settings as any),
-      mitm_route_mode: target,
-    };
-    await settingsStore.updateSettings(next);
-    showToast(
-      target === "providers"
-        ? "已切到提供商接管(Phase 1: 仅展示, MITM 仍走号池)"
-        : "已切回 Windsurf 号池接管",
-      "success",
-    );
-  } catch (e: unknown) {
-    showToast(`切换失败: ${String(e)}`, "error");
-  } finally {
-    switchingRouteMode.value = false;
-  }
-};
 
 interface ProviderBucket {
   id: ProviderID;
@@ -461,41 +440,6 @@ const nextSteps = computed(() => {
             </div>
 
             <div class="flex flex-wrap items-center gap-2">
-              <!-- ★ 路由模式胶囊：号池 ↔ 提供商 -->
-              <div
-                class="no-drag-region inline-flex items-center gap-0.5 rounded-full border border-black/[0.06] bg-white/80 p-0.5 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.05]"
-                role="tablist"
-              >
-                <button
-                  type="button"
-                  class="ios-btn flex h-7 items-center gap-1.5 rounded-full px-3 text-[11px] font-bold transition-all"
-                  :class="
-                    routeMode === 'pool'
-                      ? 'bg-gradient-to-b from-[#3b82f6] to-ios-blue text-white shadow-md shadow-ios-blue/25'
-                      : 'text-ios-textSecondary hover:text-ios-text dark:text-ios-textSecondaryDark dark:hover:text-ios-textDark'
-                  "
-                  :disabled="switchingRouteMode"
-                  @click="setRouteMode('pool')"
-                >
-                  <Users class="h-3 w-3" stroke-width="2.6" />
-                  号池
-                </button>
-                <button
-                  type="button"
-                  class="ios-btn flex h-7 items-center gap-1.5 rounded-full px-3 text-[11px] font-bold transition-all"
-                  :class="
-                    routeMode === 'providers'
-                      ? 'bg-gradient-to-b from-violet-500 via-fuchsia-400 to-rose-300 text-white shadow-md shadow-fuchsia-500/25'
-                      : 'text-ios-textSecondary hover:text-ios-text dark:text-ios-textSecondaryDark dark:hover:text-ios-textDark'
-                  "
-                  :disabled="switchingRouteMode"
-                  @click="setRouteMode('providers')"
-                >
-                  <Globe class="h-3 w-3" stroke-width="2.6" />
-                  提供商
-                </button>
-              </div>
-
               <!-- ★ v1.6.0 平台兼容性检查 -->
               <button
                 type="button"
@@ -655,11 +599,12 @@ const nextSteps = computed(() => {
         </div>
       </section>
 
-      <!-- ★ 提供商汇总(仅 routeMode=providers 时显示) -->
-      <section
-        v-if="routeMode === 'providers'"
-        class="ios-glass overflow-hidden rounded-[28px] border border-black/[0.05] dark:border-white/[0.06]"
-      >
+      <!-- ★ 提供商汇总(仅 routeMode=providers 时显示, 带进出动画) -->
+      <Transition name="route-panel">
+        <section
+          v-if="routeMode === 'providers'"
+          class="ios-glass overflow-hidden rounded-[28px] border border-black/[0.05] dark:border-white/[0.06]"
+        >
         <header
           class="flex flex-wrap items-start justify-between gap-3 border-b border-black/[0.04] px-6 py-4 dark:border-white/[0.06]"
         >
@@ -672,10 +617,10 @@ const nextSteps = computed(() => {
             <p
               class="mt-1 text-[12px] text-ios-textSecondary dark:text-ios-textSecondaryDark"
             >
-              已切到「提供商」接管模式 — 第三方 LLM 厂商号池的可用 / 总数
-              ({{ providerReady }} / {{ providerTotal }})。
+              已切到「提供商」接管 — IDE chat 请求被 MITM 翻译给已激活的卡片
+              ({{ providerReady }} / {{ providerTotal }} 可用)。
               <span class="text-amber-700 dark:text-amber-300 font-semibold">
-                Phase 1: 仅展示，MITM/Relay 仍走号池上游。
+                需要至少 1 张激活卡 + 设了 active_model 才能跑通。
               </span>
             </p>
           </div>
@@ -730,7 +675,8 @@ const nextSteps = computed(() => {
             />
           </article>
         </div>
-      </section>
+        </section>
+      </Transition>
 
       <section
         class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.25fr)_360px]"
@@ -929,3 +875,23 @@ const nextSteps = computed(() => {
     </template>
   </SkeletonOverlay>
 </template>
+
+<style scoped>
+/* 路由模式胶囊切换时,「提供商概览」面板的进出动画 */
+.route-panel-enter-active,
+.route-panel-leave-active {
+  transition:
+    opacity 320ms cubic-bezier(0.25, 1, 0.5, 1),
+    transform 380ms cubic-bezier(0.25, 1, 0.5, 1),
+    max-height 380ms cubic-bezier(0.25, 1, 0.5, 1);
+  overflow: hidden;
+  max-height: 1200px;
+}
+
+.route-panel-enter-from,
+.route-panel-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+  max-height: 0;
+}
+</style>
