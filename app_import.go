@@ -330,3 +330,114 @@ func (a *App) AddSingleAccount(mode string, value string, remark string) ImportR
 	}
 	return ImportResult{Email: "?", Success: false, Error: "无效的导入类型"}
 }
+
+// ═══════════════════════════════════════
+// 第三方 LLM 提供商账号 CRUD(独立链路,与 Windsurf Account 物理隔离)
+// 仅本期实现增/删/改/查;Relay 接入留待后续 phase。
+// ═══════════════════════════════════════
+
+// ProviderKeyItem 前端 Provider 模式批量导入的单条数据。
+type ProviderKeyItem struct {
+	Provider string `json:"provider"`
+	BaseURL  string `json:"base_url"`
+	Token    string `json:"token"`
+	Remark   string `json:"remark"`
+	Nickname string `json:"nickname"`
+}
+
+// ImportByProvider 批量导入第三方提供商账号。
+//
+// 不调 Windsurf 的 GetJWTByAPIKey / RegisterUser / enrichAccountInfoLite —
+// 第三方 token 不需要也不能换 Windsurf JWT。校验 → 落库 → 返回每条结果。
+func (a *App) ImportByProvider(items []ProviderKeyItem) []ImportResult {
+	if len(items) == 0 {
+		return nil
+	}
+	results := make([]ImportResult, len(items))
+	accounts := make([]models.ProviderAccount, 0, len(items))
+	indexMap := make([]int, 0, len(items)) // accounts[k] → results[indexMap[k]]
+
+	for i, item := range items {
+		provider := strings.TrimSpace(strings.ToLower(item.Provider))
+		token := strings.TrimSpace(item.Token)
+		baseURL := strings.TrimRight(strings.TrimSpace(item.BaseURL), "/")
+		emailLike := providerAccountDisplayName(provider, token)
+
+		if provider == "" {
+			results[i] = ImportResult{Email: emailLike, Success: false, Error: "provider 不能为空"}
+			continue
+		}
+		if token == "" {
+			results[i] = ImportResult{Email: emailLike, Success: false, Error: "token 不能为空"}
+			continue
+		}
+		if baseURL == "" {
+			results[i] = ImportResult{Email: emailLike, Success: false, Error: "base_url 不能为空"}
+			continue
+		}
+
+		acc := models.NewProviderAccount(provider, baseURL, token, item.Remark)
+		acc.Nickname = strings.TrimSpace(item.Nickname)
+		accounts = append(accounts, *acc)
+		indexMap = append(indexMap, i)
+		// 占位结果,落库失败再覆盖
+		results[i] = ImportResult{Email: emailLike, Success: true}
+	}
+
+	if len(accounts) == 0 {
+		return results
+	}
+
+	errs := a.providerStore.AddProviderBatch(accounts)
+	for k, err := range errs {
+		idx := indexMap[k]
+		if err != nil {
+			results[idx].Success = false
+			results[idx].Error = err.Error()
+		}
+	}
+	return results
+}
+
+// GetAllProviderAccounts 返回全部提供商账号(含已禁用)。
+func (a *App) GetAllProviderAccounts() []models.ProviderAccount {
+	if a.providerStore == nil {
+		return nil
+	}
+	return a.providerStore.GetAll()
+}
+
+// GetProviderAccount 按 ID 取单条。
+func (a *App) GetProviderAccount(id string) (models.ProviderAccount, error) {
+	if a.providerStore == nil {
+		return models.ProviderAccount{}, fmt.Errorf("provider store 未初始化")
+	}
+	return a.providerStore.Get(id)
+}
+
+// UpdateProviderAccount 替换整条记录(前端先 Get,改字段,再回传)。
+func (a *App) UpdateProviderAccount(acc models.ProviderAccount) error {
+	if a.providerStore == nil {
+		return fmt.Errorf("provider store 未初始化")
+	}
+	return a.providerStore.UpdateProvider(acc)
+}
+
+// DeleteProviderAccount 按 ID 删除。
+func (a *App) DeleteProviderAccount(id string) error {
+	if a.providerStore == nil {
+		return fmt.Errorf("provider store 未初始化")
+	}
+	return a.providerStore.DeleteProvider(id)
+}
+
+// providerAccountDisplayName 给 ImportResult.Email 拼一个人类可读的占位名,
+// 风格同 ImportByAPIKey(token 前 12 + 后 6)。
+func providerAccountDisplayName(provider, token string) string {
+	if token == "" {
+		return fmt.Sprintf("%s|<empty>", provider)
+	}
+	head := minInt(12, len(token))
+	tail := maxInt(0, len(token)-6)
+	return fmt.Sprintf("%s|%s...%s", provider, token[:head], token[tail:])
+}

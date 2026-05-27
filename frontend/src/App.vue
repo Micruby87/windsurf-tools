@@ -35,6 +35,7 @@ type AsyncViewModule = { default: Component };
 
 const viewLoaders: Record<ShellViewTab, () => Promise<AsyncViewModule>> = {
   Dashboard: () => import("./views/Dashboard.vue"),
+  Providers: () => import("./views/Providers.vue"),
   Accounts: () => import("./views/Accounts.vue"),
   Usage: () => import("./views/Usage.vue"),
   Relay: () => import("./views/Relay.vue"),
@@ -50,6 +51,10 @@ const viewRegistry = {
   Dashboard: {
     component: defineAsyncComponent(viewLoaders.Dashboard),
     skeleton: "dashboard",
+  },
+  Providers: {
+    component: defineAsyncComponent(viewLoaders.Providers),
+    skeleton: "accounts",
   },
   Accounts: {
     component: defineAsyncComponent(viewLoaders.Accounts),

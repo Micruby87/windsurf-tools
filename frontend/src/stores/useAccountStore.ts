@@ -138,3 +138,127 @@ export const useAccountStore = defineStore("account", () => {
     refreshAccountQuota,
   };
 });
+
+// ════════════════════════════════════════════════════════════════
+// useProviderAccountStore — 第三方 LLM 提供商账号(独立链路)
+//
+// 与 useAccountStore 物理隔离:不同后端 store(provider_accounts.json),
+// 不同 API(importByProvider / getAllProviderAccounts / ...)。
+// Windsurf 老逻辑完全不动。
+// ════════════════════════════════════════════════════════════════
+
+export interface ProviderAccountModel {
+  id: string;
+  provider: string;
+  base_url: string;
+  auth_token: string;
+  nickname?: string;
+  remark?: string;
+  status: string;
+  created_at: string;
+  last_used_at?: string;
+  used_quota?: number;
+  total_quota?: number;
+}
+
+export interface ProviderImportItem {
+  provider: string;
+  base_url: string;
+  token: string;
+  remark?: string;
+  nickname?: string;
+}
+
+export const useProviderAccountStore = defineStore("providerAccount", () => {
+  const accounts = ref<ProviderAccountModel[]>([]);
+  const isLoading = ref(false);
+  const isRefreshing = ref(false);
+  const hasLoadedOnce = ref(false);
+  const actionLoading = ref(false);
+  let fetchInFlight: Promise<void> | null = null;
+  let lastFetchedAt = 0;
+
+  const fetchAccounts = async (force = false) => {
+    const now = Date.now();
+    if (fetchInFlight) {
+      return fetchInFlight;
+    }
+    if (!force && now - lastFetchedAt < 1500) {
+      return;
+    }
+    const blocking = !hasLoadedOnce.value && accounts.value.length === 0;
+    if (blocking) {
+      isLoading.value = true;
+    } else {
+      isRefreshing.value = true;
+    }
+    fetchInFlight = (async () => {
+      try {
+        const data = await APIInfo.getAllProviderAccounts();
+        accounts.value = (data || []) as ProviderAccountModel[];
+        lastFetchedAt = Date.now();
+        hasLoadedOnce.value = true;
+      } catch (e) {
+        console.error("Failed to fetch provider accounts:", e);
+      } finally {
+        hasLoadedOnce.value = true;
+        if (blocking) {
+          isLoading.value = false;
+        } else {
+          isRefreshing.value = false;
+        }
+        fetchInFlight = null;
+      }
+    })();
+    return fetchInFlight;
+  };
+
+  const ensureAccountsLoaded = async (maxAgeMs = 20_000) => {
+    const now = Date.now();
+    if (hasLoadedOnce.value && now - lastFetchedAt < maxAgeMs) {
+      return;
+    }
+    return fetchAccounts();
+  };
+
+  const deleteAccount = async (id: string) => {
+    await APIInfo.deleteProviderAccount(id);
+    await fetchAccounts(true);
+  };
+
+  const importBatch = async (items: ProviderImportItem[]): Promise<ImportResultItem[]> => {
+    actionLoading.value = true;
+    try {
+      const results = (await APIInfo.importByProvider(items)) as ImportResultItem[];
+      await fetchAccounts(true);
+      return results || [];
+    } finally {
+      actionLoading.value = false;
+    }
+  };
+
+  const updateAccount = async (acc: ProviderAccountModel) => {
+    await APIInfo.updateProviderAccount(acc);
+    await fetchAccounts(true);
+  };
+
+  return {
+    accounts,
+    isLoading,
+    isRefreshing,
+    hasLoadedOnce,
+    actionLoading,
+    fetchAccounts,
+    ensureAccountsLoaded,
+    deleteAccount,
+    importBatch,
+    updateAccount,
+  };
+});
+
+// 向 useProviderAccountStore.importBatch 暴露的 ImportResult 类型(与 wails.ts 同源)。
+type ImportResultItem = {
+  email: string;
+  success: boolean;
+  error?: string;
+};

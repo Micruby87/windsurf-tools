@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Activity, BookOpen, Globe, HardDriveDownload, Hash, Heart, LayoutDashboard, MessageSquare, Settings, Shield, User, Users } from 'lucide-vue-next'
+import { Activity, BookOpen, Globe, HardDriveDownload, Hash, Heart, Layers, LayoutDashboard, MessageSquare, Settings, Shield, User, Users } from 'lucide-vue-next'
 import { useAccountStore } from '../../stores/useAccountStore'
 import { useMitmStatusStore } from '../../stores/useMitmStatusStore'
 import { PRIMARY_POOL_LABEL, type ShellViewTab } from '../../utils/appMode'
@@ -13,6 +13,7 @@ const mitmStore = useMitmStatusStore()
 
 const menuItems = [
   { id: 'Dashboard', icon: LayoutDashboard, label: '总览' },
+  { id: 'Providers', icon: Layers, label: '提供商' },
   { id: 'Accounts', icon: Users, label: PRIMARY_POOL_LABEL },
   { id: 'Usage', icon: Activity, label: '用量统计' },
   { id: 'Relay', icon: Globe, label: 'OpenAI Relay' },

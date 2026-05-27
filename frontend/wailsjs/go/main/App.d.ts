@@ -30,6 +30,8 @@ export function DeleteExpiredAccounts():Promise<number>;
 
 export function DeleteFreePlanAccounts():Promise<number>;
 
+export function DeleteProviderAccount(arg1:string):Promise<void>;
+
 export function ExportAccountsByGroup(arg1:string):Promise<string>;
 
 export function ExportSettings():Promise<string>;
@@ -37,6 +39,8 @@ export function ExportSettings():Promise<string>;
 export function GetAccount(arg1:string):Promise<models.Account>;
 
 export function GetAllAccounts():Promise<Array<models.Account>>;
+
+export function GetAllProviderAccounts():Promise<Array<models.ProviderAccount>>;
 
 export function GetCaptureDir():Promise<string>;
 
@@ -64,11 +68,15 @@ export function GetPerformanceTips():Promise<Array<main.PerformanceTip>>;
 
 export function GetProtoDumpDir():Promise<string>;
 
+export function GetProviderAccount(arg1:string):Promise<models.ProviderAccount>;
+
 export function GetRotationPoolStatus():Promise<main.RotationPoolStatus>;
 
 export function GetSettings():Promise<models.Settings>;
 
 export function GetStaticCacheDir():Promise<string>;
+
+export function GetUpstreamProxyStatus():Promise<main.UpstreamProxyStatus>;
 
 export function GetUsageRecords(arg1:number):Promise<Array<services.UsageRecord>>;
 
@@ -85,6 +93,8 @@ export function ImportByEmailAPIKey(arg1:Array<main.EmailAPIKeyItem>):Promise<Ar
 export function ImportByEmailPassword(arg1:Array<main.EmailPasswordItem>):Promise<Array<main.ImportResult>>;
 
 export function ImportByJWT(arg1:Array<main.JWTItem>):Promise<Array<main.ImportResult>>;
+
+export function ImportByProvider(arg1:Array<main.ProviderKeyItem>):Promise<Array<main.ImportResult>>;
 
 export function ImportByRefreshToken(arg1:Array<main.TokenItem>):Promise<Array<main.ImportResult>>;
 
@@ -153,5 +163,7 @@ export function UninstallMitmCA():Promise<void>;
 export function UninstallMitmHosts():Promise<void>;
 
 export function UnpinManualAccount():Promise<void>;
+
+export function UpdateProviderAccount(arg1:models.ProviderAccount):Promise<void>;
 
 export function UpdateSettings(arg1:models.Settings):Promise<void>;

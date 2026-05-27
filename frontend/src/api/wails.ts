@@ -30,6 +30,15 @@ export const APIInfo = {
   importByRefreshToken: AppHooks.ImportByRefreshToken,
   addSingleAccount: AppHooks.AddSingleAccount,
 
+  // 第三方 LLM 提供商账号(独立链路,与 Windsurf Account 物理隔离)
+  importByProvider: (AppHooks as any).ImportByProvider as (
+    items: Array<{ provider: string; base_url: string; token: string; remark?: string; nickname?: string }>,
+  ) => Promise<ImportResult[]>,
+  getAllProviderAccounts: (AppHooks as any).GetAllProviderAccounts as () => Promise<any[]>,
+  getProviderAccount: (AppHooks as any).GetProviderAccount as (id: string) => Promise<any>,
+  updateProviderAccount: (AppHooks as any).UpdateProviderAccount as (acc: any) => Promise<void>,
+  deleteProviderAccount: (AppHooks as any).DeleteProviderAccount as (id: string) => Promise<void>,
+
   refreshAllTokens: AppHooks.RefreshAllTokens,
   refreshAllQuotas: AppHooks.RefreshAllQuotas,
   refreshAccountQuota: AppHooks.RefreshAccountQuota,

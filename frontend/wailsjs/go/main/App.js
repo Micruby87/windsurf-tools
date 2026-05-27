@@ -54,6 +54,10 @@ export function DeleteFreePlanAccounts() {
   return window['go']['main']['App']['DeleteFreePlanAccounts']();
 }
 
+export function DeleteProviderAccount(arg1) {
+  return window['go']['main']['App']['DeleteProviderAccount'](arg1);
+}
+
 export function ExportAccountsByGroup(arg1) {
   return window['go']['main']['App']['ExportAccountsByGroup'](arg1);
 }
@@ -68,6 +72,10 @@ export function GetAccount(arg1) {
 
 export function GetAllAccounts() {
   return window['go']['main']['App']['GetAllAccounts']();
+}
+
+export function GetAllProviderAccounts() {
+  return window['go']['main']['App']['GetAllProviderAccounts']();
 }
 
 export function GetCaptureDir() {
@@ -122,6 +130,10 @@ export function GetProtoDumpDir() {
   return window['go']['main']['App']['GetProtoDumpDir']();
 }
 
+export function GetProviderAccount(arg1) {
+  return window['go']['main']['App']['GetProviderAccount'](arg1);
+}
+
 export function GetRotationPoolStatus() {
   return window['go']['main']['App']['GetRotationPoolStatus']();
 }
@@ -132,6 +144,10 @@ export function GetSettings() {
 
 export function GetStaticCacheDir() {
   return window['go']['main']['App']['GetStaticCacheDir']();
+}
+
+export function GetUpstreamProxyStatus() {
+  return window['go']['main']['App']['GetUpstreamProxyStatus']();
 }
 
 export function GetUsageRecords(arg1) {
@@ -164,6 +180,10 @@ export function ImportByEmailPassword(arg1) {
 
 export function ImportByJWT(arg1) {
   return window['go']['main']['App']['ImportByJWT'](arg1);
+}
+
+export function ImportByProvider(arg1) {
+  return window['go']['main']['App']['ImportByProvider'](arg1);
 }
 
 export function ImportByRefreshToken(arg1) {
@@ -300,6 +320,10 @@ export function UninstallMitmHosts() {
 
 export function UnpinManualAccount() {
   return window['go']['main']['App']['UnpinManualAccount']();
+}
+
+export function UpdateProviderAccount(arg1) {
+  return window['go']['main']['App']['UpdateProviderAccount'](arg1);
 }
 
 export function UpdateSettings(arg1) {

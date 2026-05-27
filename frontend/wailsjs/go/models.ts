@@ -314,6 +314,26 @@ export namespace main {
 	        this.hint = source["hint"];
 	    }
 	}
+	export class ProviderKeyItem {
+	    provider: string;
+	    base_url: string;
+	    token: string;
+	    remark: string;
+	    nickname: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProviderKeyItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.base_url = source["base_url"];
+	        this.token = source["token"];
+	        this.remark = source["remark"];
+	        this.nickname = source["nickname"];
+	    }
+	}
 	export class RotationPoolStatus {
 	    enabled: boolean;
 	    member_count: number;
@@ -360,6 +380,22 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.token = source["token"];
 	        this.remark = source["remark"];
+	    }
+	}
+	export class UpstreamProxyStatus {
+	    source: string;
+	    url: string;
+	    last_applied_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpstreamProxyStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source = source["source"];
+	        this.url = source["url"];
+	        this.last_applied_at = source["last_applied_at"];
 	    }
 	}
 	export class WindsurfDiskUsage {
@@ -453,6 +489,38 @@ export namespace models {
 	        this.last_login_at = source["last_login_at"];
 	        this.last_quota_update = source["last_quota_update"];
 	        this.created_at = source["created_at"];
+	    }
+	}
+	export class ProviderAccount {
+	    id: string;
+	    provider: string;
+	    base_url: string;
+	    auth_token: string;
+	    nickname?: string;
+	    remark?: string;
+	    status: string;
+	    created_at: string;
+	    last_used_at?: string;
+	    used_quota?: number;
+	    total_quota?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProviderAccount(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.provider = source["provider"];
+	        this.base_url = source["base_url"];
+	        this.auth_token = source["auth_token"];
+	        this.nickname = source["nickname"];
+	        this.remark = source["remark"];
+	        this.status = source["status"];
+	        this.created_at = source["created_at"];
+	        this.last_used_at = source["last_used_at"];
+	        this.used_quota = source["used_quota"];
+	        this.total_quota = source["total_quota"];
 	    }
 	}
 	export class Settings {

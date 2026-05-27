@@ -43,3 +43,34 @@ func NewAccount(email, password, nickname string) *Account {
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
 }
+
+// ProviderAccount 第三方 LLM 提供商账号(OpenAI / Anthropic / DeepSeek 等)。
+//
+// 与 Account(Windsurf 专用)物理隔离:独立 schema、独立存储文件
+// (provider_accounts.json)、独立 Store 方法。当前阶段只做 CRUD,
+// Relay 层接入留待后续 phase。
+type ProviderAccount struct {
+	ID         string `json:"id"`
+	Provider   string `json:"provider"` // openai / anthropic / deepseek / moonshot / qwen / google / xai / ...
+	BaseURL    string `json:"base_url"`
+	AuthToken  string `json:"auth_token"`
+	Nickname   string `json:"nickname,omitempty"`
+	Remark     string `json:"remark,omitempty"`
+	Status     string `json:"status"` // active / disabled
+	CreatedAt  string `json:"created_at"`
+	LastUsedAt string `json:"last_used_at,omitempty"`
+	UsedQuota  int    `json:"used_quota,omitempty"`
+	TotalQuota int    `json:"total_quota,omitempty"`
+}
+
+func NewProviderAccount(provider, baseURL, token, remark string) *ProviderAccount {
+	return &ProviderAccount{
+		ID:        uuid.New().String(),
+		Provider:  provider,
+		BaseURL:   baseURL,
+		AuthToken: token,
+		Remark:    remark,
+		Status:    "active",
+		CreatedAt: time.Now().Format(time.RFC3339),
+	}
+}

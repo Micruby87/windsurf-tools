@@ -17,6 +17,7 @@ import (
 type App struct {
 	ctx                    context.Context
 	store                  *store.Store
+	providerStore          *store.ProviderAccountStore
 	windsurfSvc            *services.WindsurfService
 	mitmProxy              *services.MitmProxy
 	openaiRelay            *services.OpenAIRelay
@@ -60,6 +61,11 @@ func (a *App) initBackend() error {
 		return fmt.Errorf("存储初始化失败: %w", err)
 	}
 	a.store = s
+	ps, err := store.NewProviderAccountStore(s.DataDir())
+	if err != nil {
+		return fmt.Errorf("提供商账号存储初始化失败: %w", err)
+	}
+	a.providerStore = ps
 	a.windsurfSvc = services.NewWindsurfService("")
 	// ── 调试日志 ──
 	settings := a.store.GetSettings()

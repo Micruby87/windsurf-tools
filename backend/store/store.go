@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"windsurf-tools-wails/backend/models"
 	"windsurf-tools-wails/backend/paths"
@@ -258,4 +259,169 @@ func (s *Store) UpdateSettings(st models.Settings) error {
 	defer s.mu.Unlock()
 	s.settings = st
 	return s.saveSettings()
+}
+
+// ════════════════════════════════════════════════════════════════
+// ProviderAccountStore — 第三方 LLM 提供商账号(OpenAI/Anthropic/...)
+//
+// 与 Windsurf Account 物理隔离:独立文件 provider_accounts.json,
+// 独立锁、独立冲突判定。复用同包的 atomicWriteFile + .bak 备份。
+// ════════════════════════════════════════════════════════════════
+
+type ProviderAccountStore struct {
+	mu       sync.RWMutex
+	file     string
+	accounts []models.ProviderAccount
+}
+
+func NewProviderAccountStore(dataDir string) (*ProviderAccountStore, error) {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return nil, fmt.Errorf("provider store: failed to create data dir: %w", err)
+	}
+	s := &ProviderAccountStore{
+		file:     filepath.Join(dataDir, "provider_accounts.json"),
+		accounts: make([]models.ProviderAccount, 0),
+	}
+	s.loadProvider()
+	return s, nil
+}
+
+func (s *ProviderAccountStore) loadProvider() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, err := os.ReadFile(s.file)
+	if err != nil {
+		return
+	}
+	if json.Valid(b) {
+		_ = json.Unmarshal(b, &s.accounts)
+		return
+	}
+	bakPath := s.file + ".bak"
+	if bakData, bakErr := os.ReadFile(bakPath); bakErr == nil && json.Valid(bakData) {
+		_ = json.Unmarshal(bakData, &s.accounts)
+		_ = os.WriteFile(s.file, bakData, 0644)
+		fmt.Printf("[ProviderStore] provider_accounts.json 已损坏,已从 .bak 恢复 (%d bytes)\n", len(bakData))
+	} else {
+		fmt.Printf("[ProviderStore] ⚠ provider_accounts.json 已损坏且无有效 .bak (%d bytes)\n", len(b))
+	}
+}
+
+func (s *ProviderAccountStore) saveProvider() error {
+	b, err := json.MarshalIndent(s.accounts, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(s.file, b)
+}
+
+func (s *ProviderAccountStore) GetAll() []models.ProviderAccount {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]models.ProviderAccount, len(s.accounts))
+	copy(out, s.accounts)
+	return out
+}
+
+func (s *ProviderAccountStore) Get(id string) (models.ProviderAccount, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := range s.accounts {
+		if s.accounts[i].ID == id {
+			return s.accounts[i], nil
+		}
+	}
+	return models.ProviderAccount{}, fmt.Errorf("provider account not found")
+}
+
+func (s *ProviderAccountStore) GetByProvider(provider string) []models.ProviderAccount {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	target := strings.TrimSpace(strings.ToLower(provider))
+	out := make([]models.ProviderAccount, 0)
+	for i := range s.accounts {
+		if strings.ToLower(s.accounts[i].Provider) == target {
+			out = append(out, s.accounts[i])
+		}
+	}
+	return out
+}
+
+func (s *ProviderAccountStore) Count() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.accounts)
+}
+
+// AddProviderBatch 批量添加,返回每条的错误(nil=成功);全部加完后只持久化一次。
+// 重复判定:provider + auth_token 联合唯一。
+func (s *ProviderAccountStore) AddProviderBatch(accs []models.ProviderAccount) []error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	errs := make([]error, len(accs))
+	added := false
+	for i, acc := range accs {
+		dup := false
+		for j := range s.accounts {
+			if ProviderAccountsConflict(s.accounts[j], acc) {
+				errs[i] = fmt.Errorf("提供商账号已存在,不可重复导入")
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			s.accounts = append(s.accounts, acc)
+			added = true
+		}
+	}
+	if added {
+		if err := s.saveProvider(); err != nil {
+			for i := range errs {
+				if errs[i] == nil {
+					errs[i] = err
+				}
+			}
+		}
+	}
+	return errs
+}
+
+func (s *ProviderAccountStore) UpdateProvider(acc models.ProviderAccount) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.accounts {
+		if s.accounts[i].ID == acc.ID {
+			s.accounts[i] = acc
+			return s.saveProvider()
+		}
+	}
+	return fmt.Errorf("provider account not found")
+}
+
+func (s *ProviderAccountStore) DeleteProvider(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.accounts {
+		if s.accounts[i].ID == id {
+			s.accounts = append(s.accounts[:i], s.accounts[i+1:]...)
+			return s.saveProvider()
+		}
+	}
+	return fmt.Errorf("provider account not found")
+}
+
+// ProviderAccountsConflict 判定两条 ProviderAccount 是否视为重复
+// (provider + auth_token 联合唯一)。
+func ProviderAccountsConflict(a, b models.ProviderAccount) bool {
+	pa := strings.TrimSpace(strings.ToLower(a.Provider))
+	pb := strings.TrimSpace(strings.ToLower(b.Provider))
+	if pa == "" || pb == "" || pa != pb {
+		return false
+	}
+	ta := strings.TrimSpace(a.AuthToken)
+	tb := strings.TrimSpace(b.AuthToken)
+	if ta == "" || tb == "" {
+		return false
+	}
+	return ta == tb
 }
