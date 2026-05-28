@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<!-- Primary SEO -->
+<title>Windsurf Tools 🏄 — Windsurf IDE 无限续杯工具 | 自动换号·MITM代理·第三方LLM接管</title>
+<meta name="description" content="Windsurf Tools：Windsurf / Codeium IDE 无限续杯工具。多账号自动切换、额度用完秒级换号、无感 MITM 代理、本地 OpenAI 兼容中转、第三方 LLM(OpenAI/Anthropic/Gemini)接管。基于 Wails v2 + React，开源跨平台桌面应用，支持 Windows / macOS / Linux。" />
+<meta name="keywords" content="Windsurf Tools,Windsurf IDE,Codeium,无限续杯,自动换号,多账号切换,MITM 代理,OpenAI 中转,OpenAI Relay,第三方 LLM 接管,Anthropic,Gemini,DeepSeek,Kimi,Wails,跨平台,免费下载" />
+<meta name="author" content="seven7763" />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#070b1e" />
+<link rel="canonical" href="https://seven7763.github.io/windsurf-tools/" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏄</text></svg>" />
+
+<!-- Open Graph -->
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Windsurf Tools" />
+<meta property="og:url" content="https://seven7763.github.io/windsurf-tools/" />
+<meta property="og:title" content="Windsurf Tools 🏄 — Windsurf IDE 无限续杯工具" />
+<meta property="og:description" content="多账号自动切换 · 额度用完秒级换号 · 无感 MITM 代理 · 本地 OpenAI 中转 · 第三方 LLM 接管 · 开源跨平台" />
+<meta property="og:image" content="https://seven7763.github.io/windsurf-tools/images/preview-dashboard.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="750" />
+<meta property="og:locale" content="zh_CN" />
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Windsurf Tools 🏄 — Windsurf IDE 无限续杯工具" />
+<meta name="twitter:description" content="多账号自动切换 · 额度用完秒级换号 · 无感代理 · 第三方 LLM 接管 · 跨平台" />
+<meta name="twitter:image" content="https://seven7763.github.io/windsurf-tools/images/preview-dashboard.png" />
+
+<!-- Structured data: SoftwareApplication -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Windsurf Tools",
+  "alternateName": "Windsurf IDE 无限续杯工具",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Windows, macOS, Linux",
+  "softwareVersion": "1.10.0",
+  "description": "Windsurf / Codeium IDE 无限续杯工具：多账号自动切换、额度用完自动换号、无感 MITM 代理、本地 OpenAI 兼容中转、第三方 LLM 接管。基于 Wails v2 + React 的开源跨平台桌面应用。",
+  "url": "https://seven7763.github.io/windsurf-tools/",
+  "downloadUrl": "https://github.com/seven7763/windsurf-tools/releases",
+  "license": "https://opensource.org/licenses/MIT",
+  "author": { "@type": "Person", "name": "seven7763" },
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "screenshot": "https://seven7763.github.io/windsurf-tools/images/preview-dashboard.png"
+}
+</script>
+<style>
+  :root {
+    --bg: #070b1e;
+    --bg2: #0d1430;
+    --card: #121a3a;
+    --card2: #0f1733;
+    --line: #1e2a52;
+    --txt: #e8edff;
+    --mut: #93a0c8;
+    --cyan: #22d3ee;
+    --blue: #4f7cff;
+    --grad: linear-gradient(120deg, #22d3ee 0%, #4f7cff 55%, #a855f7 100%);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--txt);
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---- background glow ---- */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1;
+    background:
+      radial-gradient(900px 500px at 80% -5%, rgba(79,124,255,.22), transparent 60%),
+      radial-gradient(700px 500px at 5% 5%, rgba(34,211,238,.16), transparent 55%),
+      radial-gradient(800px 600px at 50% 110%, rgba(168,85,247,.14), transparent 60%);
+  }
+
+  /* ---- nav ---- */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px);
+    background: rgba(7,11,30,.72);
+    border-bottom: 1px solid var(--line);
+  }
+  nav .wrap { display: flex; align-items: center; gap: 24px; height: 64px; }
+  .brand { font-weight: 800; font-size: 19px; letter-spacing: .3px; display: flex; align-items: center; gap: 8px; }
+  .brand .grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  nav .links { margin-left: auto; display: flex; gap: 26px; font-size: 14px; color: var(--mut); }
+  nav .links a:hover { color: var(--txt); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 20px; border-radius: 12px; font-weight: 700; font-size: 14px;
+    background: var(--grad); color: #051; color: #03102a;
+    border: none; cursor: pointer; transition: transform .15s, box-shadow .15s;
+    box-shadow: 0 8px 24px rgba(34,211,238,.25);
+  }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(79,124,255,.4); }
+  .btn.ghost { background: transparent; color: var(--txt); border: 1px solid var(--line); box-shadow: none; }
+  .btn.ghost:hover { border-color: var(--cyan); }
+
+  /* ---- hero ---- */
+  header { padding: 88px 0 56px; text-align: center; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 8px; margin-bottom: 26px;
+    padding: 6px 14px; border-radius: 999px; font-size: 13px; color: var(--cyan);
+    background: rgba(34,211,238,.08); border: 1px solid rgba(34,211,238,.3);
+  }
+  h1 { font-size: clamp(34px, 6vw, 60px); line-height: 1.08; font-weight: 850; letter-spacing: -1px; }
+  h1 .grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .sub { margin: 22px auto 0; max-width: 720px; font-size: clamp(15px, 2.2vw, 19px); color: var(--mut); }
+  .cta { margin-top: 38px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .meta { margin-top: 22px; font-size: 13px; color: var(--mut); }
+  .meta b { color: var(--txt); }
+
+  .shot {
+    margin: 56px auto 0; max-width: 1000px;
+    border-radius: 16px; overflow: hidden;
+    border: 1px solid var(--line);
+    box-shadow: 0 40px 100px -30px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.02);
+  }
+  .shot img { display: block; width: 100%; }
+
+  /* ---- sections ---- */
+  section { padding: 72px 0; }
+  .eyebrow { color: var(--cyan); font-weight: 700; font-size: 13px; letter-spacing: 2px; text-transform: uppercase; }
+  h2 { font-size: clamp(26px, 4vw, 38px); font-weight: 800; margin-top: 10px; letter-spacing: -.5px; }
+  .lead { color: var(--mut); margin-top: 12px; max-width: 640px; font-size: 16px; }
+  .center { text-align: center; }
+  .center .lead { margin-left: auto; margin-right: auto; }
+
+  /* ---- feature grid ---- */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 44px; }
+  .feat {
+    background: linear-gradient(180deg, var(--card), var(--card2));
+    border: 1px solid var(--line); border-radius: 16px; padding: 26px;
+    transition: transform .18s, border-color .18s;
+  }
+  .feat:hover { transform: translateY(-4px); border-color: rgba(34,211,238,.45); }
+  .feat .ico { font-size: 28px; }
+  .feat h3 { margin: 14px 0 8px; font-size: 17px; font-weight: 750; }
+  .feat p { color: var(--mut); font-size: 14px; }
+
+  /* ---- gallery ---- */
+  .gallery { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; margin-top: 44px; }
+  .gcard { background: var(--card2); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; transition: border-color .18s; }
+  .gcard:hover { border-color: rgba(79,124,255,.5); }
+  .gcard img { display: block; width: 100%; cursor: zoom-in; }
+  .gcard .cap { padding: 16px 18px; }
+  .gcard .cap h4 { font-size: 15px; font-weight: 700; }
+  .gcard .cap p { color: var(--mut); font-size: 13px; margin-top: 4px; }
+
+  /* ---- download ---- */
+  .dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 44px; }
+  .dlcard {
+    background: linear-gradient(180deg, var(--card), var(--card2));
+    border: 1px solid var(--line); border-radius: 16px; padding: 28px; text-align: center;
+    transition: transform .18s, border-color .18s;
+  }
+  .dlcard:hover { transform: translateY(-4px); border-color: rgba(34,211,238,.5); }
+  .dlcard .os { font-size: 40px; }
+  .dlcard h3 { margin: 12px 0 4px; font-size: 18px; }
+  .dlcard .arch { color: var(--mut); font-size: 13px; margin-bottom: 18px; }
+  .dlcard .btn { width: 100%; justify-content: center; }
+  .dlnote { margin-top: 26px; text-align: center; color: var(--mut); font-size: 13px; }
+  .dlnote a { color: var(--cyan); }
+
+  /* ---- footer ---- */
+  footer { border-top: 1px solid var(--line); padding: 40px 0; color: var(--mut); font-size: 13px; }
+  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; align-items: center; }
+  footer a:hover { color: var(--txt); }
+  .disclaimer { margin-top: 18px; font-size: 12px; color: #6b76a0; max-width: 760px; }
+
+  /* ---- lightbox ---- */
+  .lb { position: fixed; inset: 0; z-index: 100; background: rgba(3,6,18,.92); display: none; align-items: center; justify-content: center; padding: 40px; cursor: zoom-out; }
+  .lb.on { display: flex; }
+  .lb img { max-width: 95%; max-height: 92%; border-radius: 12px; box-shadow: 0 30px 90px rgba(0,0,0,.7); }
+
+  @media (max-width: 860px) {
+    .grid, .dl { grid-template-columns: 1fr; }
+    .gallery { grid-template-columns: 1fr; }
+    nav .links { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="brand">🏄 <span class="grad">Windsurf Tools</span></div>
+    <div class="links">
+      <a href="#features">功能</a>
+      <a href="#previews">界面</a>
+      <a href="#download">下载</a>
+      <a href="https://github.com/seven7763/windsurf-tools" target="_blank">GitHub</a>
+    </div>
+    <a class="btn" href="#download">立即下载</a>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap">
+    <div class="badge">● v1.10.0 已发布 · Windows / macOS / Linux</div>
+    <h1>Windsurf IDE<br><span class="grad">无限续杯工具</span></h1>
+    <p class="sub">
+      多账号自动切换 · 额度用完秒级换号 · 无感 MITM 代理 · 本地 OpenAI 中转 ·
+      第三方 LLM 接管(OpenAI / Anthropic / Gemini)。一键启动,跨平台桌面应用。
+    </p>
+    <div class="cta">
+      <a class="btn" href="#download">⬇ 免费下载</a>
+      <a class="btn ghost" href="https://github.com/seven7763/windsurf-tools" target="_blank">★ Star on GitHub</a>
+    </div>
+    <div class="meta">基于 <b>Wails v2</b>(Go + React 18 + TypeScript)· 开源 <b>MIT</b> 协议 · 数据全本地化存储</div>
+
+    <div class="shot">
+      <img src="images/preview-dashboard.png" alt="Windsurf Tools 首页总览面板" loading="lazy" />
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap center">
+    <div class="eyebrow">Core Features</div>
+    <h2>为 Windsurf / Codeium IDE 而生</h2>
+    <p class="lead">透明劫持、智能轮换、第三方接管 —— IDE 内无需任何操作,对话永不中断。</p>
+  </div>
+  <div class="wrap">
+    <div class="grid">
+      <div class="feat"><div class="ico">🔄</div><h3>额度用完自动换号</h3><p>检测当前账号额度耗尽,秒级切到下一个可用账号,Cascade 对话不中断、不报错。</p></div>
+      <div class="feat"><div class="ico">🎯</div><h3>多账号号池管理</h3><p>Free / Trial / Pro / Max 多套餐统一管理,支持手动锁定、轮换池、会话粘性。</p></div>
+      <div class="feat"><div class="ico">🌟</div><h3>第三方 LLM 接管</h3><p>一键切到「提供商」模式,IDE chat 流量翻译给你自己的 key,10 家协议兼容。</p></div>
+      <div class="feat"><div class="ico">🕵️</div><h3>无感 MITM 代理</h3><p>透明劫持 Windsurf 请求,protobuf 层替换身份与计费字段,IDE 内零操作。</p></div>
+      <div class="feat"><div class="ico">🌐</div><h3>本地 OpenAI Relay</h3><p>SSE 流式输出,兼容 OpenAI SDK / LobeChat / Cursor,自带健康检测与故障倒换。</p></div>
+      <div class="feat"><div class="ico">📥</div><h3>批量混合导入</h3><p>API Key / JWT / 邮箱密码 / session-token 多格式混合粘贴,智能识别一键导入。</p></div>
+      <div class="feat"><div class="ico">📊</div><h3>实时用量统计</h3><p>Token 流水 + 美金成本聚合 + 完整请求审计,杜绝隐藏费用。</p></div>
+      <div class="feat"><div class="ico">🛰️</div><h3>上游代理热切换</h3><p>手动 ProxyURL &gt; Clash + IP 轮换 &gt; 系统代理 &gt; 直连,切换瞬间不 abort 请求。</p></div>
+      <div class="feat"><div class="ico">⌘</div><h3>命令面板 + 暗色主题</h3><p>全局 ⌘K 模糊搜索命令 / 视图 / 账号,完整暗色主题贯穿所有页面。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="previews" style="background:linear-gradient(180deg,transparent,rgba(13,20,48,.5),transparent);">
+  <div class="wrap center">
+    <div class="eyebrow">Previews</div>
+    <h2>界面一览</h2>
+    <p class="lead">以下预览图均由 mock 数据自动截取,所有账号 / token / IP 均为占位字符串。</p>
+  </div>
+  <div class="wrap">
+    <div class="gallery">
+      <div class="gcard"><img src="images/preview-accounts.png" alt="账号与号池管理" loading="lazy"><div class="cap"><h4>号池统管全景</h4><p>动态跟踪 Free / Trial / Pro / Max 全序列套餐状况</p></div></div>
+      <div class="gcard"><img src="images/preview-providers.png" alt="第三方提供商" loading="lazy"><div class="cap"><h4>第三方提供商接管</h4><p>独立账号池 · 自动拉 /v1/models · 10 家协议</p></div></div>
+      <div class="gcard"><img src="images/preview-relay.png" alt="OpenAI Relay" loading="lazy"><div class="cap"><h4>本地 OpenAI 兼容中转</h4><p>SSE 流式 · 模型映射 · 健康检测与故障倒换</p></div></div>
+      <div class="gcard"><img src="images/preview-usage.png" alt="用量统计" loading="lazy"><div class="cap"><h4>流量用量统计面板</h4><p>Token 聚合 · 美金成本 · 完整历史流水审计</p></div></div>
+      <div class="gcard"><img src="images/preview-settings.png" alt="MITM 设置" loading="lazy"><div class="cap"><h4>高级 MITM 配置</h4><p>会话固化 · Protobuf 解析 · 手动出站代理 URL</p></div></div>
+      <div class="gcard"><img src="images/preview-command-palette.png" alt="命令面板" loading="lazy"><div class="cap"><h4>全局命令面板 ⌘K</h4><p>模糊搜索命令 / 视图 / 账号,键盘流友好</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="download">
+  <div class="wrap center">
+    <div class="eyebrow">Download</div>
+    <h2>下载 v1.10.0</h2>
+    <p class="lead">每次发布 GitHub Actions 自动构建全平台产物,选择你的系统即可。</p>
+  </div>
+  <div class="wrap">
+    <div class="dl">
+      <div class="dlcard">
+        <div class="os">🪟</div>
+        <h3>Windows</h3>
+        <div class="arch">Windows 10 / 11 · amd64</div>
+        <a class="btn" href="https://github.com/seven7763/windsurf-tools/releases/latest/download/windsurf-tools-wails.exe">下载 .exe</a>
+      </div>
+      <div class="dlcard">
+        <div class="os">🍎</div>
+        <h3>macOS</h3>
+        <div class="arch">Apple Silicon / Intel</div>
+        <a class="btn" href="https://github.com/seven7763/windsurf-tools/releases/latest/download/windsurf-tools-wails-macos-apple-silicon-arm64.zip" style="margin-bottom:10px;">Apple Silicon</a>
+        <a class="btn ghost" href="https://github.com/seven7763/windsurf-tools/releases/latest/download/windsurf-tools-wails-macos-intel-amd64.zip">Intel</a>
+      </div>
+      <div class="dlcard">
+        <div class="os">🐧</div>
+        <h3>Linux</h3>
+        <div class="arch">amd64 · WebKit2GTK</div>
+        <a class="btn" href="https://github.com/seven7763/windsurf-tools/releases/latest/download/windsurf-tools-wails-linux-amd64.tar.gz">下载 .tar.gz</a>
+      </div>
+    </div>
+    <p class="dlnote">
+      找不到合适的版本?查看 <a href="https://github.com/seven7763/windsurf-tools/releases" target="_blank">全部 Releases</a>
+      与 <a href="https://github.com/seven7763/windsurf-tools/releases/latest/download/SHA256SUMS.txt" target="_blank">SHA256 校验</a>。
+      <br>Windows 默认请求管理员权限以完成 Hosts / CA 配置 · macOS 首次启动需处理 Gatekeeper。
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>🏄 Windsurf Tools · MIT License · 数据全本地化存储于 settings.json / accounts.json</div>
+    <div style="display:flex;gap:22px;">
+      <a href="https://github.com/seven7763/windsurf-tools" target="_blank">GitHub</a>
+      <a href="https://github.com/seven7763/windsurf-tools/releases" target="_blank">Releases</a>
+      <a href="https://github.com/seven7763/windsurf-tools/issues" target="_blank">Issues</a>
+    </div>
+  </div>
+  <div class="wrap disclaimer">
+    ⚠️ 声明:本工具仅供学习与技术研究使用。本程序永远不会窃取或上传任何账号池数据,全部本地化存储。
+    请遵守 Windsurf / Codeium 服务条款,因使用本工具产生的任何后果由使用者自行承担。
+  </div>
+</footer>
+
+<div class="lb" id="lb"><img id="lbimg" src="" alt="" /></div>
+<script>
+  // simple lightbox for gallery + hero
+  const lb = document.getElementById('lb');
+  const lbimg = document.getElementById('lbimg');
+  document.querySelectorAll('.gcard img, .shot img').forEach(img => {
+    img.addEventListener('click', () => { lbimg.src = img.src; lb.classList.add('on'); });
+  });
+  lb.addEventListener('click', () => lb.classList.remove('on'));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') lb.classList.remove('on'); });
+</script>
+</body>
+</html>

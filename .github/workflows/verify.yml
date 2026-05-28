@@ -44,12 +44,8 @@ jobs:
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev
 
-      - name: Go vet
-        run: go vet ./...
-
-      - name: Go tests with race detector
-        run: go test -race -count=1 -timeout=180s ./...
-
+      # 前端必须先构建：main.go 用 //go:embed all:frontend/dist 嵌入产物，
+      # 否则 go vet / go build 会因为 frontend/dist 不存在而失败。
       - name: Frontend install
         working-directory: frontend
         run: npm ci
@@ -61,6 +57,12 @@ jobs:
       - name: Frontend build
         working-directory: frontend
         run: npm run build
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go tests with race detector
+        run: go test -race -count=1 -timeout=180s ./...
 
       - name: Diff hygiene
         run: git diff --check
