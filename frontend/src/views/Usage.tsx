@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentType,
-} from "react";
+import { useEffect, useMemo, useState, type ComponentType } from "react";
 import {
   Activity,
   ArrowRightLeft,
@@ -16,15 +10,12 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-import { APIInfo, type Models } from "../api/wails";
+import { type Models } from "../api/wails";
 import PageLoadingSkeleton from "../components/common/PageLoadingSkeleton";
 import UsageRecordsTable from "../components/UsageRecordsTable";
-import { useMainViewStore } from "../stores/useMainViewStore";
+import { useUsageStore } from "../stores/useUsageStore";
 import { confirmDialog, showErrorToast, showToast } from "../utils/toast";
 
-const POLL_INTERVAL_MS = 5000;
-const RECORDS_REFRESH_MS = 20000;
-const RECORD_LIMIT = 5000;
 const MODEL_BREAKDOWN_LIMIT = 6;
 
 type IconType = ComponentType<{ className?: string; strokeWidth?: number | string }>;
@@ -113,29 +104,23 @@ function KpiCard({
 }
 
 /**
- * Usage — Vue 1:1 完整迁移：6 KPI / 每日趋势 / 模型分布 / 调用流水（子组件）/ 自动 5s poll。
+ * Usage — 6 KPI / 每日趋势 / 模型分布 / 调用流水（子组件）。
+ * Phase B-3 后数据层全部上提到 useUsageStore：本组件只负责 UI
+ * 渲染 + 本地 filter/page/search state。polling/visibility/TTL/in-flight
+ * 都交给 store。
  */
 export default function Usage() {
-  const activeTab = useMainViewStore((s) => s.activeTab);
+  const summary = useUsageStore((s) => s.summary);
+  const records = useUsageStore((s) => s.records);
+  const loading = useUsageStore((s) => s.isLoading);
+  const refreshing = useUsageStore((s) => s.isRefreshing);
 
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [summary, setSummary] = useState<Models.services.UsageSummary | null>(
-    null,
-  );
-  const [records, setRecords] = useState<Models.services.UsageRecord[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [modelFilter, setModelFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 100;
-
-  const summaryFetchInFlight = useRef<Promise<void> | null>(null);
-  const recordsFetchInFlight = useRef<Promise<void> | null>(null);
-  const lastSummaryFetchedAt = useRef(0);
-  const lastRecordsFetchedAt = useRef(0);
-  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const totalRecordCount = summary?.total_requests || 0;
   const successCount = Math.max(
@@ -240,112 +225,16 @@ export default function Usage() {
     if (currentPage > totalPages) setCurrentPage(totalPages);
   }, [currentPage, totalPages]);
 
-  // ── fetch + poll ─────────────
-  const clearPollTimer = () => {
-    if (pollTimer.current) {
-      clearTimeout(pollTimer.current);
-      pollTimer.current = null;
-    }
-  };
-
-  const shouldPoll = () => {
-    if (
-      typeof document !== "undefined" &&
-      document.visibilityState !== "visible"
-    ) {
-      return false;
-    }
-    return useMainViewStore.getState().activeTab === "Usage";
-  };
-
-  const shouldRefreshRecords = (force = false) =>
-    force ||
-    records.length === 0 ||
-    Date.now() - lastRecordsFetchedAt.current >= RECORDS_REFRESH_MS;
-
-  const fetchSummary = async (force = false) => {
-    if (summaryFetchInFlight.current) return summaryFetchInFlight.current;
-    if (!force && Date.now() - lastSummaryFetchedAt.current < 2500) return;
-    summaryFetchInFlight.current = (async () => {
-      const s = await APIInfo.getUsageSummary();
-      setSummary(s);
-      lastSummaryFetchedAt.current = Date.now();
-    })();
-    try {
-      await summaryFetchInFlight.current;
-    } finally {
-      summaryFetchInFlight.current = null;
-    }
-  };
-
-  const fetchRecords = async (force = false) => {
-    if (recordsFetchInFlight.current) return recordsFetchInFlight.current;
-    if (!shouldRefreshRecords(force)) return;
-    recordsFetchInFlight.current = (async () => {
-      const r = (await APIInfo.getUsageRecords(RECORD_LIMIT)) || [];
-      setRecords(r);
-      lastRecordsFetchedAt.current = Date.now();
-    })();
-    try {
-      await recordsFetchInFlight.current;
-    } finally {
-      recordsFetchInFlight.current = null;
-    }
-  };
-
-  const fetchUsageData = async (opts?: {
-    silent?: boolean;
-    forceSummary?: boolean;
-    forceRecords?: boolean;
-  }) => {
-    const silent = opts?.silent ?? false;
-    const forceSummary = opts?.forceSummary ?? false;
-    const forceRecords = opts?.forceRecords ?? false;
-    if (!silent) setLoading(true);
-    else setRefreshing(true);
-    try {
-      await Promise.all([
-        fetchSummary(forceSummary),
-        forceRecords || shouldRefreshRecords()
-          ? fetchRecords(forceRecords)
-          : Promise.resolve(),
-      ]);
-    } catch (e) {
-      if (!silent) showErrorToast(e, "获取用量数据失败");
-      else console.error("Silent usage refresh failed:", e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
-
-  const scheduleNextPoll = () => {
-    clearPollTimer();
-    if (!shouldPoll()) return;
-    pollTimer.current = setTimeout(() => {
-      void fetchUsageData({ silent: true }).finally(scheduleNextPoll);
-    }, POLL_INTERVAL_MS);
-  };
-
-  const resumePolling = (forceRefresh = false) => {
-    if (!shouldPoll()) {
-      clearPollTimer();
-      return;
-    }
-    void fetchUsageData({
-      silent: true,
-      forceSummary: forceRefresh,
-      forceRecords: forceRefresh,
-    }).finally(scheduleNextPoll);
-  };
-
+  // ── fetch + poll（上提到 useUsageStore）─────────────
   const handleRefresh = async () => {
-    await fetchUsageData({
-      silent: true,
-      forceSummary: true,
-      forceRecords: true,
-    });
-    showToast("用量统计已刷新", "success");
+    try {
+      await useUsageStore
+        .getState()
+        .fetchAll({ silent: true, forceSummary: true, forceRecords: true });
+      showToast("用量统计已刷新", "success");
+    } catch (e) {
+      showErrorToast(e, "获取用量数据失败");
+    }
   };
 
   const handleClear = async () => {
@@ -355,8 +244,7 @@ export default function Usage() {
     });
     if (!ok) return;
     try {
-      const deletedCount = await APIInfo.deleteAllUsage();
-      await fetchUsageData({ forceSummary: true, forceRecords: true });
+      const deletedCount = await useUsageStore.getState().clearAllUsage();
       showToast(`已清空 ${deletedCount} 条用量记录`, "success");
     } catch (e) {
       showErrorToast(e, "清空记录失败");
@@ -364,27 +252,10 @@ export default function Usage() {
   };
 
   useEffect(() => {
-    if (activeTab === "Usage") resumePolling();
-    else clearPollTimer();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
-
-  useEffect(() => {
-    void fetchUsageData({
-      forceSummary: true,
-      forceRecords: true,
-    }).finally(scheduleNextPoll);
-    const onVis = () => {
-      if (typeof document === "undefined") return;
-      if (document.visibilityState === "visible") resumePolling();
-      else clearPollTimer();
-    };
-    document.addEventListener("visibilitychange", onVis);
+    useUsageStore.getState().startPolling();
     return () => {
-      clearPollTimer();
-      document.removeEventListener("visibilitychange", onVis);
+      useUsageStore.getState().stopPolling();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

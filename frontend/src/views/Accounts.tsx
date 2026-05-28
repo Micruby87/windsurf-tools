@@ -3,7 +3,9 @@ import {
   ArrowRightLeft,
   BarChart3,
   CalendarDays,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   Clock,
   Download,
   KeyRound,
@@ -13,10 +15,12 @@ import {
   Plus,
   RefreshCcw,
   Search,
+  ShieldAlert,
   ShieldCheck,
   Shuffle,
   Sparkles,
   Trash2,
+  Unlock,
   UserX,
   Users,
   X,
@@ -24,8 +28,13 @@ import {
 import { APIInfo } from "../api/wails";
 import F7Banner from "../components/F7Banner";
 import AccountCardSkeleton from "../components/accounts/AccountCardSkeleton";
-import ImportModal from "../components/accounts/ImportModal";
+import PlanFilterChips from "../components/accounts/PlanFilterChips";
+import RotationPoolStatusCard from "../components/RotationPoolStatusCard";
 import PageLoadingSkeleton from "../components/common/PageLoadingSkeleton";
+import {
+  openContextMenu,
+  type ContextMenuItem,
+} from "../components/ios/IContextMenu";
 import IDropdownMenu, {
   type DropdownItem,
 } from "../components/ios/IDropdownMenu";
@@ -35,6 +44,7 @@ import { useAccountStore } from "../stores/useAccountStore";
 import { useMainViewStore } from "../stores/useMainViewStore";
 import { useMitmStatusStore } from "../stores/useMitmStatusStore";
 import { useSettingsStore } from "../stores/useSettingsStore";
+import { useTaskStore } from "../stores/useTaskStore";
 import {
   getPlanTone,
   isQuotaDepleted,
@@ -47,6 +57,12 @@ import {
   formatSyncTimeLine,
 } from "../utils/datetimeAsia";
 import {
+  computeMitmPoolStatus,
+  type MitmPoolStatus,
+} from "../utils/mitmPoolStatus";
+import {
+  formatSwitchPlanFilterSummary,
+  normalizeSwitchPlanFilter,
   SWITCH_PLAN_FILTER_TONES,
   type SwitchPlanTone,
 } from "../utils/settingsModel";
@@ -149,13 +165,26 @@ function parseQuotaWidth(str: string): string {
  * - 空状态 3 步 onboarding
  */
 export default function Accounts() {
-  const accountStore = useAccountStore();
-  const mainView = useMainViewStore();
-  const mitmStore = useMitmStatusStore();
-  const settingsStore = useSettingsStore();
+  // C-2 性能：使用 selector 分别订阅字段，避免任何 store 任何字段变化
+  // 都触发这个 1470 行组件整棵重渲染（旧实现 polling 8s/15s 、settings
+  // autosave、accounts 刷新都会全棵重渲）。action 走 getState() 不订阅。
+  const accounts = useAccountStore((s) => s.accounts);
+  const accountActionLoading = useAccountStore((s) => s.actionLoading);
+  const accountHasLoadedOnce = useAccountStore((s) => s.hasLoadedOnce);
+  const status = useMitmStatusStore((s) => s.status);
+  const switchLoading = useMitmStatusStore((s) => s.switchLoading);
+  const switchTargetAccountId = useMitmStatusStore(
+    (s) => s.switchTargetAccountId,
+  );
+  const settings = useSettingsStore((s) => s.settings);
   const sf = useSmartFriend();
 
-  const [showImportModal, setShowImportModal] = useState(false);
+  // 1.6: ImportModal 已提升为全局资源（App.tsx 挂载），这里只调 store 控制。
+  const openImportModal = useMainViewStore((s) => s.openImportModal);
+  // 1.5: 跨视图跳转高亮某账号卡（Header 当前活跃 Key 卡点击触发）。
+  const highlightAccountId = useMainViewStore((s) => s.highlightAccountId);
+  const clearHighlight = useMainViewStore((s) => s.clearHighlight);
+  const highlightCardRef = useRef<HTMLDivElement | null>(null);
   const [quotaRefreshingIds, setQuotaRefreshingIds] = useState<Set<string>>(
     new Set(),
   );
@@ -168,6 +197,9 @@ export default function Accounts() {
   const [pageSize, setPageSize] = useState<number>(60);
   const [currentPage, setCurrentPage] = useState(1);
   const [planGroupFilter, setPlanGroupFilter] = useState<string>("");
+  // D-B: 顶部 MITM 池准入 chip 组的折叠状态 + 保存中标志
+  const [planPoolExpanded, setPlanPoolExpanded] = useState(false);
+  const [planPoolSaving, setPlanPoolSaving] = useState(false);
 
   // bootstrap：加载账号 / mitm 状态 / 设置；12s 后再 force 刷新
   const bootstrapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -191,18 +223,42 @@ export default function Accounts() {
     setCurrentPage(1);
   }, [activeTab, quickFilter, searchQuery, accountSort]);
 
+  // 1.5: 跨视图跳转 → 清筛选保证目标卡可见 + 滚动 + 1.6s 后清 store。
+  useEffect(() => {
+    if (!highlightAccountId) return;
+    // 清筛选回第一页，确保目标卡一定在页面上（不被过滤 / 不在第二页）。
+    setActiveTab("all");
+    setQuickFilter("all");
+    setSearchQuery("");
+    setCurrentPage(1);
+
+    // 等下一帧渲染完，scrollIntoView。
+    const scrollTimer = setTimeout(() => {
+      highlightCardRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 100);
+    // 1.6s 后清 highlight，让 ring 动画自然消失。
+    const clearTimer = setTimeout(() => clearHighlight(), 1600);
+    return () => {
+      clearTimeout(scrollTimer);
+      clearTimeout(clearTimer);
+    };
+  }, [highlightAccountId, clearHighlight]);
+
   // ── 单次遍历聚合：tab 计数 + free 计数 ──────────────────────────────
   const accountAgg = useMemo(() => {
     const counts: Partial<Record<SwitchPlanTone, number>> = {};
     for (const t of SWITCH_PLAN_FILTER_TONES) counts[t] = 0;
     let freeCount = 0;
-    for (const a of accountStore.accounts) {
+    for (const a of accounts) {
       const tone = getPlanTone(a.plan_name) as SwitchPlanTone;
       counts[tone] = (counts[tone] ?? 0) + 1;
       if (tone === "free") freeCount++;
     }
     return { counts, freeCount };
-  }, [accountStore.accounts]);
+  }, [accounts]);
 
   const tabsList = useMemo(() => {
     const c = accountAgg.counts;
@@ -214,10 +270,10 @@ export default function Accounts() {
       count: c[key as SwitchPlanTone] ?? 0,
     }));
     return [
-      { key: "all", label: "全部", count: accountStore.accounts.length },
+      { key: "all", label: "全部", count: accounts.length },
       ...tabs,
     ];
-  }, [accountAgg, accountStore.accounts.length]);
+  }, [accountAgg, accounts.length]);
 
   const freePlanAccountCount = accountAgg.freeCount;
 
@@ -229,7 +285,7 @@ export default function Accounts() {
       .toLowerCase();
     if (!key) return null;
     return (
-      mitmStore.status?.pool_status?.find((item) => {
+      status?.pool_status?.find((item) => {
         const itemEmail = String(item.email || "")
           .trim()
           .toLowerCase();
@@ -354,7 +410,7 @@ export default function Accounts() {
 
   // ── 筛选 / 排序 / 分页 ─────────────────────────────────────────────
   const filteredAccounts = useMemo(() => {
-    let list = accountStore.accounts;
+    let list = accounts;
     if (activeTab !== "all") {
       list = list.filter((a) => getPlanTone(a.plan_name) === activeTab);
     }
@@ -371,7 +427,7 @@ export default function Accounts() {
         (a.plan_name?.toLowerCase().includes(q) ?? false),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountStore.accounts, activeTab, quickFilter, searchQuery, sf.active]);
+  }, [accounts, activeTab, quickFilter, searchQuery, sf.active]);
 
   const displayAccounts = useMemo(() => {
     const items = [...filteredAccounts];
@@ -447,7 +503,7 @@ export default function Accounts() {
       pending: 0,
       credential_gap: 0,
     };
-    for (const acc of accountStore.accounts) {
+    for (const acc of accounts) {
       const meta = getCardStateMeta(acc);
       const runtimeExhausted =
         !sf.active && Boolean(findMitmPoolRuntime(acc)?.runtime_exhausted);
@@ -460,7 +516,7 @@ export default function Accounts() {
       if (!hasApiKey(acc)) counts.credential_gap++;
     }
     return [
-      { key: "all", label: "全部", count: accountStore.accounts.length },
+      { key: "all", label: "全部", count: accounts.length },
       { key: "online", label: "当前活跃", count: counts.online },
       { key: "switchable", label: "可切换", count: counts.switchable },
       { key: "depleted", label: "额度见底", count: counts.depleted },
@@ -474,7 +530,7 @@ export default function Accounts() {
       { key: "credential_gap", label: "待补 API Key", count: counts.credential_gap },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountStore.accounts, mitmStore.status, sf.active]);
+  }, [accounts, status, sf.active]);
 
   const hasListFilters =
     activeTab !== "all" ||
@@ -495,7 +551,7 @@ export default function Accounts() {
     });
     if (!ok) return;
     try {
-      await accountStore.deleteAccount(id);
+      await useAccountStore.getState().deleteAccount(id);
       showToast("账号已移除", "success");
     } catch (e) {
       showErrorToast(e, "移除失败");
@@ -504,10 +560,40 @@ export default function Accounts() {
 
   const handleCleanExpired = async () => {
     try {
-      const n = await accountStore.cleanExpiredAccounts();
+      const n = await useAccountStore.getState().cleanExpiredAccounts();
       showToast(`已清理 ${n} 个过期账号`, "success");
     } catch (e) {
       showErrorToast(e, "清理失败");
+    }
+  };
+
+  const handleUnlockAllExhausted = async () => {
+    try {
+      const n = await APIInfo.clearAllMitmExhausted();
+      if (n > 0) {
+        showToast(`已解锁 ${n} 个号`, "success");
+      } else {
+        showToast("当前没有被锁定的号", "info");
+      }
+    } catch (e) {
+      showErrorToast(e, "解锁失败");
+    }
+  };
+
+  const handleUnlockOne = async (apiKey: string, label: string) => {
+    if (!apiKey) {
+      showToast("此号没有 API Key，无法解锁", "warning");
+      return;
+    }
+    try {
+      const ok = await APIInfo.clearMitmKeyExhausted(apiKey);
+      if (ok) {
+        showToast(`已解锁 ${label}`, "success");
+      } else {
+        showToast(`${label} 当前未被锁定`, "info");
+      }
+    } catch (e) {
+      showErrorToast(e, "解锁失败");
     }
   };
 
@@ -523,7 +609,9 @@ export default function Accounts() {
     );
     if (!ok) return;
     try {
-      const deleted = await accountStore.deleteFreePlanAccounts();
+      const deleted = await useAccountStore
+        .getState()
+        .deleteFreePlanAccounts();
       showToast(`已删除 ${deleted} 个免费账号`, "success");
     } catch (e) {
       showErrorToast(e, "删除失败");
@@ -531,21 +619,29 @@ export default function Accounts() {
   };
 
   const handleRefreshTokens = async () => {
+    // F1: 进度走后端 task tracker，前端只需打开 Drawer
+    useTaskStore.getState().setOpen(true);
+    void useTaskStore.getState().pollServer();
     try {
-      const map = await accountStore.refreshAllTokens();
-      await mitmStore.fetchStatus(true);
+      const map = await useAccountStore.getState().refreshAllTokens();
+      await useMitmStatusStore.getState().fetchStatus(true);
       const entries = Object.entries(map || {});
       const ok = entries.filter(([, v]) => String(v).includes("成功")).length;
       showToast(`刷新完成：${ok} / ${entries.length}`, "success");
     } catch (e) {
       showErrorToast(e, "刷新失败");
+    } finally {
+      void useTaskStore.getState().pollServer();
     }
   };
 
   const handleRefreshAllQuotas = async () => {
+    // F1: 同上
+    useTaskStore.getState().setOpen(true);
+    void useTaskStore.getState().pollServer();
     try {
-      const map = await accountStore.refreshAllQuotas();
-      await mitmStore.fetchStatus(true);
+      const map = await useAccountStore.getState().refreshAllQuotas();
+      await useMitmStatusStore.getState().fetchStatus(true);
       const entries = Object.entries(map || {});
       const synced = entries.filter(([, v]) =>
         String(v).includes("已同步"),
@@ -553,12 +649,14 @@ export default function Accounts() {
       showToast(`同步完成：${synced} / ${entries.length}`, "success");
     } catch (e) {
       showErrorToast(e, "同步额度失败");
+    } finally {
+      void useTaskStore.getState().pollServer();
     }
   };
 
   const handleSwitchNextSeat = async () => {
     try {
-      const target = await mitmStore.switchToNext();
+      const target = await useMitmStatusStore.getState().switchToNext();
       showToast(`MITM 已切到下一席位：${target || "已切换"}`, "success");
     } catch (e) {
       showErrorToast(e, "手动切换失败");
@@ -569,9 +667,9 @@ export default function Accounts() {
     if (quotaRefreshingIds.has(id)) return;
     setQuotaRefreshingIds((prev) => new Set(prev).add(id));
     try {
-      await accountStore.refreshAccountQuota(id);
-      await accountStore.fetchAccounts(true);
-      await mitmStore.fetchStatus(true);
+      await useAccountStore.getState().refreshAccountQuota(id);
+      await useAccountStore.getState().fetchAccounts(true);
+      await useMitmStatusStore.getState().fetchStatus(true);
       showToast(`${email} 额度已更新`, "success");
     } catch (e) {
       showErrorToast(e, "刷新额度失败");
@@ -588,13 +686,64 @@ export default function Accounts() {
 
   const handleSwitchMitmToAccount = async (acc: models.Account) => {
     try {
-      const target = await mitmStore.switchToAccount(acc.id);
-      await accountStore.fetchAccounts(true);
+      const target = await useMitmStatusStore
+        .getState()
+        .switchToAccount(acc.id);
+      await useAccountStore.getState().fetchAccounts(true);
       showToast(
         `MITM 已切到：${target || acc.email || "目标账号"}`,
         "success",
       );
     } catch (e) {
+      // D-D: 错误回收
+      // 切号失败若是「未加入 MITM 号池」类，从 poolStatus 推断具体 reason，
+      // 给 toast 配上一键 action 按钮，让用户直接修筛选 / 补 API Key / 刷新额度。
+      const msg = String((e as { message?: string })?.message ?? e ?? "");
+      const isPoolReject = /未加入\s*MITM\s*号池|not in MITM pool/i.test(msg);
+      const ps = mitmPoolStatusMap.get(acc.id);
+      if (isPoolReject && ps && !ps.inPool) {
+        const baseMsg = `切到 ${acc.email || "该账号"} 失败 · ${ps.detail}`;
+        if (ps.reason === "plan_filtered" && ps.accountTone) {
+          const tone = ps.accountTone;
+          showToast(baseMsg, "error", 8000, {
+            label: ps.suggestion || `+ 加入 ${tone}`,
+            onClick: () => {
+              const nextSet = (() => {
+                const n = normalizeSwitchPlanFilter(planFilter);
+                if (n === "all") return new Set(SWITCH_PLAN_FILTER_TONES);
+                return new Set(n.split(",") as SwitchPlanTone[]);
+              })();
+              nextSet.add(tone);
+              const ordered = SWITCH_PLAN_FILTER_TONES.filter((t) =>
+                nextSet.has(t),
+              );
+              void handlePlanFilterChange(
+                normalizeSwitchPlanFilter(ordered.join(",")),
+              );
+            },
+          });
+          return;
+        }
+        if (ps.reason === "no_api_key") {
+          showToast(baseMsg, "error", 8000, {
+            label: ps.suggestion || "打开导入弹窗",
+            onClick: () => openImportModal(),
+          });
+          return;
+        }
+        if (ps.reason === "quota_exhausted") {
+          showToast(baseMsg, "error", 8000, {
+            label: ps.suggestion || "刷新额度",
+            onClick: () => {
+              void handleRefreshOneQuota(acc.id, acc.email || acc.id);
+            },
+          });
+          return;
+        }
+        // account_expired 等不给一键操作，仅提示
+        showToast(baseMsg, "error", 6000);
+        return;
+      }
       showErrorToast(e, "切换到该账号失败");
     }
   };
@@ -602,7 +751,7 @@ export default function Accounts() {
   const handleLoginToWindsurf = async (acc: models.Account) => {
     try {
       const target = await APIInfo.switchAccountLocal(acc.id);
-      await accountStore.fetchAccounts(true);
+      await useAccountStore.getState().fetchAccounts(true);
       showToast(
         `已写入 Windsurf 本地登录态：${target || acc.email || "目标账号"}`,
         "success",
@@ -613,23 +762,69 @@ export default function Accounts() {
   };
 
   const isAccountSwitching = (id: string) =>
-    mitmStore.switchLoading && mitmStore.switchTargetAccountId === id;
+    switchLoading && switchTargetAccountId === id;
 
   const isAccountPinned = (acc: models.Account) =>
-    settingsStore.settings?.manual_pin_enabled === true &&
-    settingsStore.settings?.manual_pin_account_id === acc.id;
+    settings?.manual_pin_enabled === true &&
+    settings?.manual_pin_account_id === acc.id;
 
   const isAccountInRotationPool = (acc: models.Account) =>
-    settingsStore.settings?.rotation_pool_enabled === true &&
-    (settingsStore.settings?.rotation_pool_account_ids || []).includes(acc.id);
+    settings?.rotation_pool_enabled === true &&
+    (settings?.rotation_pool_account_ids || []).includes(acc.id);
+
+  // D-B: plan filter 写回后端
+  const planFilter = settings?.auto_switch_plan_filter ?? "all";
+  const handlePlanFilterChange = async (next: string) => {
+    if (planPoolSaving) return;
+    if (normalizeSwitchPlanFilter(next) === normalizeSwitchPlanFilter(planFilter))
+      return;
+    setPlanPoolSaving(true);
+    try {
+      await useSettingsStore.getState().saveAutoSwitchPlanFilter(next);
+    } catch (e) {
+      showErrorToast(e, "保存准入计划失败");
+    } finally {
+      setPlanPoolSaving(false);
+    }
+  };
+
+  // D-B 上面 chip 组的实时统计 + D-C 卡片用的 pool 状态 map
+  const planPoolStats = useMemo(() => {
+    const tones = new Set<SwitchPlanTone>(
+      (() => {
+        const n = normalizeSwitchPlanFilter(planFilter);
+        if (n === "all") return SWITCH_PLAN_FILTER_TONES;
+        return n.split(",") as SwitchPlanTone[];
+      })(),
+    );
+    let admitted = 0;
+    for (const acc of accounts) {
+      const tone = getPlanTone(acc.plan_name) as SwitchPlanTone;
+      if (tones.has(tone)) admitted++;
+    }
+    return { admitted, total: accounts.length };
+  }, [accounts, planFilter]);
+  const mitmPoolStatusMap = useMemo(() => {
+    const map = new Map<string, MitmPoolStatus>();
+    for (const acc of accounts) {
+      map.set(
+        acc.id,
+        computeMitmPoolStatus(acc, planFilter, {
+          smartFriendActive: sf.active,
+          mitmStatus: status,
+        }),
+      );
+    }
+    return map;
+  }, [accounts, planFilter, sf.active, status]);
 
   const rotationPoolActive = () =>
-    settingsStore.settings?.rotation_pool_enabled === true;
+    settings?.rotation_pool_enabled === true;
 
   const handleUnpinFromCard = async () => {
     try {
       await APIInfo.unpinManualAccount();
-      await settingsStore.fetchSettings(true);
+      await useSettingsStore.getState().fetchSettings(true);
       showToast("已解锁，自动切换已恢复", "success");
     } catch (e) {
       showErrorToast(e, "解锁失败");
@@ -637,7 +832,7 @@ export default function Accounts() {
   };
 
   const handleTogglePoolMember = async (acc: models.Account) => {
-    const s = settingsStore.settings;
+    const s = settings;
     if (!s) return;
     const ids = [...(s.rotation_pool_account_ids || [])];
     const idx = ids.indexOf(acc.id);
@@ -649,7 +844,7 @@ export default function Accounts() {
         ...s,
         rotation_pool_account_ids: ids,
       } as models.Settings);
-      await settingsStore.fetchSettings(true);
+      await useSettingsStore.getState().fetchSettings(true);
       showToast(
         adding ? `已加入轮换池: ${acc.email}` : `已移出轮换池: ${acc.email}`,
         "success",
@@ -712,7 +907,7 @@ export default function Accounts() {
     if (!ok) return;
     try {
       const n = await APIInfo.deleteAccountsByGroup(tone);
-      await accountStore.fetchAccounts(true);
+      await useAccountStore.getState().fetchAccounts(true);
       setPlanGroupFilter("");
       showToast(`已删除 ${n} 个「${label}」账号`, "success");
     } catch (e) {
@@ -745,24 +940,29 @@ export default function Accounts() {
       label: "刷新所有凭证",
       icon: KeyRound,
       onClick: () => void handleRefreshTokens(),
-      disabled:
-        accountStore.actionLoading || accountStore.accounts.length === 0,
+      disabled: accountActionLoading || accounts.length === 0,
       hint: "JWT",
     },
     {
       label: "同步所有额度",
       icon: BarChart3,
       onClick: () => void handleRefreshAllQuotas(),
-      disabled:
-        accountStore.actionLoading || accountStore.accounts.length === 0,
+      disabled: accountActionLoading || accounts.length === 0,
       hint: "Quota",
+    },
+    {
+      label: "批量解锁号池",
+      icon: Unlock,
+      onClick: () => void handleUnlockAllExhausted(),
+      disabled: accounts.length === 0,
+      hint: "Reset",
     },
     { type: "divider" },
     {
       label: "清理过期账号",
       icon: Trash2,
       onClick: () => void handleCleanExpired(),
-      disabled: accountStore.accounts.length === 0,
+      disabled: accounts.length === 0,
     },
     {
       label: `删除免费账号${
@@ -820,11 +1020,93 @@ export default function Accounts() {
     return items;
   };
 
+  // 1.4: 卡片右键上下文菜单（操作比 dropdown 更全 — 包含切到此号 + 写本地登录）
+  const buildAccountContextMenu = (
+    acc: models.Account,
+  ): ContextMenuItem[] => {
+    const online = isCurrentOnline(acc);
+    const switching = isAccountSwitching(acc.id);
+    const items: ContextMenuItem[] = [];
+    if (!online) {
+      items.push({
+        id: "switch-mitm",
+        label: "切到此号 (MITM)",
+        icon: ArrowRightLeft,
+        onSelect: () => void handleSwitchMitmToAccount(acc),
+        disabled: !hasApiKey(acc) || switching || switchLoading,
+      });
+    }
+    items.push({
+      id: "login-local",
+      label: "写入 Windsurf 本地登录态",
+      icon: LogIn,
+      onSelect: () => void handleLoginToWindsurf(acc),
+      disabled: switching,
+    });
+    if (hasApiKey(acc)) {
+      items.push({
+        id: "copy-key",
+        label: "复制 API Key",
+        icon: KeyRound,
+        onSelect: () => void copyApiKey(acc),
+      });
+    }
+    items.push({
+      id: "refresh-quota",
+      label: "刷新此账号额度",
+      icon: RefreshCcw,
+      onSelect: () => void handleRefreshOneQuota(acc.id, acc.email),
+      disabled: isAccountCardRefreshing(acc.id) || switching,
+    });
+    if (hasApiKey(acc)) {
+      items.push({
+        id: "unlock-exhausted",
+        label: "解锁此号 (额度耗尽)",
+        icon: Unlock,
+        onSelect: () =>
+          void handleUnlockOne(
+            String(acc.windsurf_api_key || "").trim(),
+            acc.email || acc.id,
+          ),
+      });
+    }
+    if (rotationPoolActive()) {
+      items.push({
+        id: "toggle-pool",
+        label: isAccountInRotationPool(acc)
+          ? "移出轮换池"
+          : "加入轮换池",
+        icon: Shuffle,
+        onSelect: () => void handleTogglePoolMember(acc),
+      });
+    }
+    if (isAccountPinned(acc)) {
+      items.push({
+        id: "unpin",
+        label: "解除锁定 (Pin)",
+        icon: Lock,
+        onSelect: () => void handleUnpinFromCard(),
+      });
+    }
+    items.push({
+      id: "delete",
+      label: "移除此账号",
+      icon: Trash2,
+      onSelect: () => void handleDelete(acc.id),
+      danger: true,
+      divider: true,
+      disabled: switching,
+    });
+    return items;
+  };
+
   // 空状态 onboarding 跳转
-  const goRelay = () => mainView.setActiveTab("Relay");
-  const handleStepImport = () => setShowImportModal(true);
-  const handleStepEnableMitm = () => mainView.setActiveTab("Dashboard");
-  const handleStepFinish = () => mainView.setActiveTab("Dashboard");
+  const goRelay = () => useMainViewStore.getState().setActiveTab("Relay");
+  const handleStepImport = () => openImportModal();
+  const handleStepEnableMitm = () =>
+    useMainViewStore.getState().setActiveTab("Dashboard");
+  const handleStepFinish = () =>
+    useMainViewStore.getState().setActiveTab("Dashboard");
 
   return (
     <div className="p-6 md:p-8 flex flex-1 flex-col max-w-6xl mx-auto w-full min-h-0">
@@ -846,7 +1128,7 @@ export default function Accounts() {
           <button
             type="button"
             className="no-drag-region inline-flex items-center gap-1.5 px-5 py-2.5 bg-gradient-to-b from-[#3b82f6] to-ios-blue text-white rounded-full font-semibold text-[14px] ios-btn shadow-md ring-1 ring-black/5 whitespace-nowrap"
-            onClick={() => setShowImportModal(true)}
+            onClick={openImportModal}
           >
             <Plus className="w-[18px] h-[18px]" strokeWidth={2.5} />
             批量导入
@@ -854,11 +1136,9 @@ export default function Accounts() {
           <button
             type="button"
             className="no-drag-region inline-flex items-center gap-1.5 px-4 py-2.5 bg-ios-blue/10 text-ios-blue dark:text-blue-300 rounded-full font-semibold text-[14px] ios-btn hover:bg-ios-blue/15 transition-colors disabled:opacity-50"
-            disabled={
-              mitmStore.switchLoading || !mitmStore.status?.pool_status?.length
-            }
+            disabled={switchLoading || !status?.pool_status?.length}
             title={
-              mitmStore.status?.pool_status?.length
+              status?.pool_status?.length
                 ? "手动切到 MITM 号池中下一席位"
                 : "MITM 号池为空，先导入带 API Key 的账号"
             }
@@ -866,9 +1146,7 @@ export default function Accounts() {
           >
             <ArrowRightLeft
               className={`w-[18px] h-[18px] ${
-                mitmStore.switchLoading && !mitmStore.switchTargetAccountId
-                  ? "animate-pulse"
-                  : ""
+                switchLoading && !switchTargetAccountId ? "animate-pulse" : ""
               }`}
               strokeWidth={2.5}
             />
@@ -880,14 +1158,14 @@ export default function Accounts() {
             width="w-60"
             triggerLabel="批量管理"
             triggerIcon={MoreHorizontal}
-            disabled={accountStore.accounts.length === 0}
+            disabled={accounts.length === 0}
             triggerTitle="批量管理：全量刷新 / 同步 / 清理"
           />
         </div>
       </div>
 
       {/* ── plan tabs ── */}
-      <div className="flex items-center gap-2 mb-6 overflow-x-auto no-scrollbar shrink-0 pb-1">
+      <div className="flex items-center gap-2 mb-4 overflow-x-auto no-scrollbar shrink-0 pb-1">
         {tabsList.map((tab) => {
           const active = activeTab === tab.key;
           return (
@@ -897,7 +1175,7 @@ export default function Accounts() {
               className={`no-drag-region flex items-center gap-2 px-4 py-2 rounded-full font-bold text-[14px] transition-all whitespace-nowrap ${
                 active
                   ? "bg-ios-text text-white dark:bg-white dark:text-black shadow-md"
-                  : "bg-black/5 dark:bg-white/5 text-ios-textSecondary hover:bg-black/10 dark:hover:bg-white/10"
+                  : "bg-black/5 dark:bg-white/5 text-ios-textSecondary dark:text-ios-textSecondaryDark hover:bg-black/10 dark:hover:bg-white/10"
               }`}
               onClick={() => setActiveTab(tab.key)}
             >
@@ -916,8 +1194,52 @@ export default function Accounts() {
         })}
       </div>
 
+      {/* ── P2: RotationPool 状态卡（仅 enabled 时显示） ── */}
+      <div className="mb-4 shrink-0">
+        <RotationPoolStatusCard />
+      </div>
+
+      {/* ── D-B: MITM 号池准入计划 chip 组（默认折叠，summary 行可展开） ── */}
+      {accounts.length > 0 ? (
+        <div className="mb-5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setPlanPoolExpanded((v) => !v)}
+            className="no-drag-region inline-flex items-center gap-2 rounded-full bg-black/[0.04] px-3 py-1.5 text-[12px] font-bold text-ios-textSecondary dark:text-ios-textSecondaryDark hover:bg-black/[0.08] dark:bg-white/[0.06]  dark:hover:bg-white/[0.1]"
+            title="点击折叠/展开 MITM 准入计划 chip"
+          >
+            <ShieldCheck className="h-3.5 w-3.5" strokeWidth={2.6} />
+            <span>📥 进 MITM 号池的套餐</span>
+            <span className="rounded-full bg-ios-blue/15 px-2 py-0.5 text-[10px] font-black text-ios-blue">
+              {planPoolStats.admitted} / {planPoolStats.total}
+            </span>
+            <span className="text-ios-textSecondary/80 dark:text-ios-textSecondaryDark/80">
+              · {formatSwitchPlanFilterSummary(planFilter)}
+            </span>
+            {planPoolExpanded ? (
+              <ChevronUp className="h-3.5 w-3.5" strokeWidth={2.6} />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" strokeWidth={2.6} />
+            )}
+          </button>
+          {planPoolExpanded ? (
+            <div className="mt-2">
+              <PlanFilterChips
+                filter={planFilter}
+                onChange={handlePlanFilterChange}
+                counts={accountAgg.counts}
+                disabled={planPoolSaving}
+              />
+              <div className="mt-1.5 px-1 text-[11px] text-ios-textSecondary/80 dark:text-ios-textSecondaryDark/80">
+                所选 plan 类型的账号会被纳入「下一席位」候选与 MITM 号池。变更立即生效。
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* ── quick filter chips ── */}
-      {accountStore.accounts.length > 0 ? (
+      {accounts.length > 0 ? (
         <div className="mb-5 flex flex-wrap items-center gap-2 shrink-0">
           {quickFilterOptions.map((item) => {
             const active = quickFilter === item.key;
@@ -928,7 +1250,7 @@ export default function Accounts() {
                 className={`no-drag-region inline-flex items-center gap-2 rounded-full px-3.5 py-2 text-[12px] font-bold transition-colors ${
                   active
                     ? "bg-ios-blue text-white shadow-sm"
-                    : "bg-black/[0.04] text-ios-textSecondary hover:bg-black/[0.08] dark:bg-white/[0.05] dark:text-ios-textSecondaryDark dark:hover:bg-white/[0.1]"
+                    : "bg-black/[0.04] text-ios-textSecondary dark:text-ios-textSecondaryDark hover:bg-black/[0.08] dark:bg-white/[0.05]  dark:hover:bg-white/[0.1]"
                 }`}
                 onClick={() => setQuickFilter(item.key)}
               >
@@ -937,7 +1259,7 @@ export default function Accounts() {
                   className={`rounded-full px-2 py-0.5 text-[10px] font-black ${
                     active
                       ? "bg-white/20 text-white"
-                      : "bg-black/[0.05] text-ios-textSecondary dark:bg-white/[0.08] dark:text-ios-textSecondaryDark"
+                      : "bg-black/[0.05] text-ios-textSecondary dark:text-ios-textSecondaryDark dark:bg-white/[0.08] "
                   }`}
                 >
                   {item.count}
@@ -949,11 +1271,11 @@ export default function Accounts() {
       ) : null}
 
       {/* ── 搜索 + 排序 + 分组操作 ── */}
-      {accountStore.accounts.length > 0 ? (
+      {accounts.length > 0 ? (
         <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 mb-6 shrink-0 max-w-6xl">
           <div className="relative flex-1 min-w-[220px]">
             <Search
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-ios-textSecondary opacity-60 pointer-events-none"
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-ios-textSecondary dark:text-ios-textSecondaryDark opacity-60 pointer-events-none"
               strokeWidth={2.4}
             />
             <input
@@ -966,7 +1288,7 @@ export default function Accounts() {
             {searchQuery ? (
               <button
                 type="button"
-                className="no-drag-region absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full hover:bg-black/10 text-ios-textSecondary"
+                className="no-drag-region absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full hover:bg-black/10 text-ios-textSecondary dark:text-ios-textSecondaryDark"
                 onClick={() => setSearchQuery("")}
               >
                 <X className="w-4 h-4 mx-auto" strokeWidth={2.5} />
@@ -1024,9 +1346,9 @@ export default function Accounts() {
       ) : null}
 
       {/* ── 整页骨架 / 空状态 / 筛选无结果 / 卡片网格 ── */}
-      {!accountStore.hasLoadedOnce && accountStore.accounts.length === 0 ? (
+      {!accountHasLoadedOnce && accounts.length === 0 ? (
         <PageLoadingSkeleton variant="accounts" className="flex-1" />
-      ) : accountStore.accounts.length === 0 ? (
+      ) : accounts.length === 0 ? (
         <EmptyState
           onImport={handleStepImport}
           onEnableMitm={handleStepEnableMitm}
@@ -1034,7 +1356,7 @@ export default function Accounts() {
           onRelay={goRelay}
         />
       ) : displayAccounts.length === 0 ? (
-        <div className="flex flex-col items-center justify-center flex-1 py-16 text-ios-textSecondary">
+        <div className="flex flex-col items-center justify-center flex-1 py-16 text-ios-textSecondary dark:text-ios-textSecondaryDark">
           <Search className="w-12 h-12 opacity-50 mb-4" />
           <p className="text-[17px] font-medium">
             {searchQuery.trim() ? "未找到匹配的账号" : "当前筛选下没有账号"}
@@ -1061,14 +1383,24 @@ export default function Accounts() {
               const pinned = isAccountPinned(acc);
               const inPool = isAccountInRotationPool(acc);
               const switching = isAccountSwitching(acc.id);
+              // D-C: 池外原因徽标
+              const poolStatus = mitmPoolStatusMap.get(acc.id);
+              const isHighlighted = highlightAccountId === acc.id;
               return (
                 <div
                   key={acc.id}
+                  ref={isHighlighted ? highlightCardRef : undefined}
+                  onContextMenu={(e) =>
+                    openContextMenu(e, buildAccountContextMenu(acc))
+                  }
                   className={[
                     "bg-white dark:bg-[#1C1C1E] rounded-[22px] flex flex-col relative overflow-hidden transition-all duration-300 ease-out hover:shadow-lg hover:-translate-y-0.5",
                     online
                       ? "border-2 border-ios-green/40 dark:border-ios-greenDark/40 shadow-[0_0_0_1px_rgba(52,199,89,0.12)]"
                       : "border border-black/[0.05] dark:border-white/[0.08] shadow-sm",
+                    isHighlighted
+                      ? "ring-4 ring-ios-blue/50 ring-offset-2 ring-offset-white dark:ring-offset-[#1C1C1E] animate-pulse"
+                      : "",
                   ].join(" ")}
                 >
                   <div
@@ -1087,6 +1419,23 @@ export default function Accounts() {
                         >
                           {meta.label}
                         </span>
+                        {poolStatus && !poolStatus.inPool ? (
+                          <span
+                            className={[
+                              "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-bold",
+                              poolStatus.reason === "plan_filtered"
+                                ? "border-slate-400/40 bg-slate-500/10 text-slate-700 dark:text-slate-300"
+                                : "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+                            ].join(" ")}
+                            title={`${poolStatus.detail}${poolStatus.suggestion ? ` · ${poolStatus.suggestion}` : ""}`}
+                          >
+                            <ShieldAlert
+                              className="h-3 w-3"
+                              strokeWidth={2.6}
+                            />
+                            未进池
+                          </span>
+                        ) : null}
                         {boundCount > 0 ? (
                           <span
                             className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-violet-500/10 border border-violet-500/15 px-2 py-1 text-[10px] font-bold text-violet-700 dark:text-violet-300"
@@ -1134,7 +1483,7 @@ export default function Accounts() {
                                 : "bg-ios-blue/10 text-ios-blue dark:text-blue-300 hover:bg-ios-blue/15",
                             ].join(" ")}
                             disabled={
-                              !hasApiKey(acc) || online || mitmStore.switchLoading
+                              !hasApiKey(acc) || online || switchLoading
                             }
                             title={online ? "当前活跃席位" : "手动切到这个 MITM 账号"}
                             onClick={() => handleSwitchMitmToAccount(acc)}
@@ -1176,7 +1525,7 @@ export default function Accounts() {
                       {acc.remark ? (
                         <div className="mt-3 flex flex-wrap gap-2">
                           <span
-                            className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ios-textSecondary dark:bg-white/[0.08] dark:text-ios-textSecondaryDark"
+                            className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[10px] font-semibold text-ios-textSecondary dark:text-ios-textSecondaryDark dark:bg-white/[0.08] "
                             title={acc.remark}
                           >
                             {acc.remark}
@@ -1335,10 +1684,6 @@ export default function Accounts() {
         </div>
       )}
 
-      <ImportModal
-        isOpen={showImportModal}
-        onClose={() => setShowImportModal(false)}
-      />
     </div>
   );
 }
@@ -1358,7 +1703,7 @@ function EmptyState({
   onRelay,
 }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center flex-1 text-ios-textSecondary py-12 ios-page-enter">
+    <div className="flex flex-col items-center justify-center flex-1 text-ios-textSecondary dark:text-ios-textSecondaryDark py-12 ios-page-enter">
       <div className="relative mb-8">
         <div className="w-32 h-32 rounded-[32px] bg-gradient-to-br from-ios-blue/15 to-violet-500/15 dark:from-ios-blue/25 dark:to-violet-500/25 flex items-center justify-center shadow-[0_12px_32px_rgba(37,99,235,0.12)]">
           <Users

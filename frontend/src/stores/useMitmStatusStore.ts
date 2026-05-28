@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { APIInfo } from "../api/wails";
 import type { services } from "../../wailsjs/go/models";
+import { createAsyncResource } from "./_async";
 
 interface MitmStatusState {
   status: services.MitmProxyStatus | null;
@@ -10,8 +11,8 @@ interface MitmStatusState {
   switchLoading: boolean;
   switchTargetAccountId: string;
 
-  fetchStatus: (force?: boolean) => Promise<void> | void;
-  ensureStatusLoaded: (maxAgeMs?: number) => Promise<void> | void;
+  fetchStatus: (force?: boolean) => Promise<void>;
+  ensureStatusLoaded: (maxAgeMs?: number) => Promise<void>;
   startPolling: () => void;
   stopPolling: () => void;
   notifyVisibleAgain: () => void;
@@ -22,14 +23,27 @@ interface MitmStatusState {
   unbindSession: (convIDPrefix: string) => Promise<boolean>;
 }
 
-let pollTimer: ReturnType<typeof setTimeout> | null = null;
-let fetchInFlight: Promise<void> | null = null;
-let lastFetchedAt = 0;
-
 const nextPollDelay = (running: boolean | undefined) =>
   running ? 8000 : 15000;
 
 export const useMitmStatusStore = create<MitmStatusState>((set, get) => {
+  // poll 状态用闭包变量持有（非状态字段，不触发渲染）
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const resource = createAsyncResource<services.MitmProxyStatus>({
+    ttlMs: 1200,
+    fetcher: () => APIInfo.getMitmProxyStatus(),
+    apply: (data) => set({ status: data }),
+    onError: (e) => console.error("GetMitmProxyStatus error:", e),
+    // F3 修复：已有数据时不再阻塞 UI。否则切回 tab 触发 fetchStatus 时会闪一次骨架屏。
+    isHydrated: () => get().hasLoadedOnce && get().status != null,
+    setHydrated: () => set({ hasLoadedOnce: true }),
+    shouldBlock: () => !get().hasLoadedOnce && get().status == null,
+    setLoading: (b) => set({ isLoading: b }),
+    setRefreshing: (b) => set({ isRefreshing: b }),
+    defaultEnsureAgeMs: 10_000,
+  });
+
   const scheduleNextTick = () => {
     if (pollTimer) clearTimeout(pollTimer);
     pollTimer = setTimeout(() => {
@@ -40,12 +54,7 @@ export const useMitmStatusStore = create<MitmStatusState>((set, get) => {
         scheduleNextTick();
         return;
       }
-      const p = get().fetchStatus();
-      if (p && typeof (p as Promise<void>).finally === "function") {
-        (p as Promise<void>).finally(scheduleNextTick);
-      } else {
-        scheduleNextTick();
-      }
+      resource.fetch().finally(scheduleNextTick);
     }, nextPollDelay(get().status?.running));
   };
 
@@ -57,45 +66,12 @@ export const useMitmStatusStore = create<MitmStatusState>((set, get) => {
     switchLoading: false,
     switchTargetAccountId: "",
 
-    fetchStatus: async (force = false) => {
-      const now = Date.now();
-      if (fetchInFlight && !force) return fetchInFlight;
-      if (!force && get().status && now - lastFetchedAt < 1200) return;
-      // F3 修复：和 useAccountStore 对齐，已有数据时不再阻塞 UI。否则切回 tab
-      // 触发 fetchStatus 时会短暂闪一次骨架屏。
-      const blocking = !get().hasLoadedOnce && get().status == null;
-      set(blocking ? { isLoading: true } : { isRefreshing: true });
-      fetchInFlight = (async () => {
-        try {
-          const s = await APIInfo.getMitmProxyStatus();
-          set({ status: s });
-        } catch (e) {
-          console.error("GetMitmProxyStatus error:", e);
-        } finally {
-          lastFetchedAt = Date.now();
-          set({ hasLoadedOnce: true });
-          if (blocking) set({ isLoading: false });
-          else set({ isRefreshing: false });
-          fetchInFlight = null;
-        }
-      })();
-      return fetchInFlight;
-    },
-
-    ensureStatusLoaded: async (maxAgeMs = 10_000) => {
-      const now = Date.now();
-      if (get().hasLoadedOnce && now - lastFetchedAt < maxAgeMs) return;
-      return get().fetchStatus();
-    },
+    fetchStatus: (force) => resource.fetch(force),
+    ensureStatusLoaded: (maxAgeMs) => resource.ensureLoaded(maxAgeMs),
 
     startPolling: () => {
       if (pollTimer) return;
-      const p = get().fetchStatus();
-      if (p && typeof (p as Promise<void>).finally === "function") {
-        (p as Promise<void>).finally(scheduleNextTick);
-      } else {
-        scheduleNextTick();
-      }
+      resource.fetch().finally(scheduleNextTick);
     },
 
     stopPolling: () => {
@@ -109,22 +85,17 @@ export const useMitmStatusStore = create<MitmStatusState>((set, get) => {
     notifyVisibleAgain: () => {
       if (!pollTimer) {
         // polling 未启动 → 只刷一次最新状态，不重启循环
-        void get().fetchStatus(true);
+        void resource.fetch(true);
         return;
       }
-      const p = get().fetchStatus(true);
-      if (p && typeof (p as Promise<void>).finally === "function") {
-        (p as Promise<void>).finally(scheduleNextTick);
-      } else {
-        scheduleNextTick();
-      }
+      resource.fetch(true).finally(scheduleNextTick);
     },
 
     switchToNext: async () => {
       set({ switchLoading: true, switchTargetAccountId: "" });
       try {
         const result = await APIInfo.switchMitmToNext();
-        await get().fetchStatus(true);
+        await resource.fetch(true);
         return result;
       } finally {
         set({ switchLoading: false });
@@ -135,7 +106,7 @@ export const useMitmStatusStore = create<MitmStatusState>((set, get) => {
       set({ switchLoading: true, switchTargetAccountId: accountID });
       try {
         const result = await APIInfo.switchMitmToAccount(accountID);
-        await get().fetchStatus(true);
+        await resource.fetch(true);
         return result;
       } finally {
         set({ switchLoading: false, switchTargetAccountId: "" });
@@ -148,7 +119,7 @@ export const useMitmStatusStore = create<MitmStatusState>((set, get) => {
     unbindSession: async (convIDPrefix) => {
       try {
         const ok = await APIInfo.unbindMitmSession(convIDPrefix);
-        if (ok) await get().fetchStatus(true);
+        if (ok) await resource.fetch(true);
         return ok;
       } catch (e) {
         console.error("UnbindMitmSession error:", e);

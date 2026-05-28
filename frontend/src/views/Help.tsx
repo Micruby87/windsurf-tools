@@ -279,7 +279,7 @@ const CHAPTERS: Chapter[] = [
               <td className="py-1.5 pr-2">
                 <b>自定义</b>
               </td>
-              <td className="py-1.5 px-2 text-gray-500">取决</td>
+              <td className="py-1.5 px-2 text-gray-500 dark:text-gray-400">取决</td>
               <td className="py-1.5 pl-2">用 textarea 自己改</td>
             </tr>
           </tbody>

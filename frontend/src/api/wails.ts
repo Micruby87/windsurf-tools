@@ -149,7 +149,10 @@ export const APIInfo = {
   // MITM 全量抓包
   toggleMitmFullCapture: AppHooks.ToggleMitmFullCapture,
   getMitmFullCaptureEnabled: AppHooks.GetMitmFullCaptureEnabled,
-  getCaptureDir: AppHooks.GetCaptureDir,
+  // 用户开了抓包 / dump 开关后能直接打开目录看数据（之前 wails.ts 暴露了 getCaptureDir
+  // 但前端没人调用 + 没有"打开目录"按钮，用户找不到数据保存在哪 → UX bug）
+  revealCaptureDir: (AppHooks as any).RevealCaptureDir as () => Promise<string>,
+  revealProtoDumpDir: (AppHooks as any).RevealProtoDumpDir as () => Promise<string>,
 
   getMitmSessionBindings: AppHooks.GetMitmSessionBindings,
   unbindMitmSession: AppHooks.UnbindMitmSession,
@@ -168,4 +171,37 @@ export const APIInfo = {
   applyPerformanceFix: AppHooks.ApplyPerformanceFix,
   applyAllPerformanceFixes: AppHooks.ApplyAllPerformanceFixes,
   getWindsurfProcessInfo: AppHooks.GetWindsurfProcessInfo,
+
+  // F1: 批量任务进度跟踪
+  getTasks: AppHooks.GetTasks,
+  clearFinishedTasks: AppHooks.ClearFinishedTasks,
+
+  // F2: Dashboard 历史趋势聚合
+  getDashboardMetrics: AppHooks.GetDashboardMetrics,
+
+  // 2.4: 窗口尺寸 / 位置记忆
+  saveWindowGeometry: (AppHooks as any).SaveWindowGeometry as (
+    width: number,
+    height: number,
+    x: number,
+    y: number,
+    maximized: boolean,
+  ) => Promise<void>,
+  restoreWindowGeometry: (AppHooks as any).RestoreWindowGeometry as () => Promise<
+    Record<string, unknown>
+  >,
+
+  // 2.2: macOS / Win / Linux 桌面通知（受 settings.desktop_notifications 控制）
+  sendDesktopNotification: (AppHooks as any).SendDesktopNotification as (
+    kind: "info" | "warn" | "success" | "error",
+    eventKey: string,
+    title: string,
+    body: string,
+  ) => Promise<void>,
+
+  // MITM 号池：手动 / 批量解除「额度耗尽」锁定（用户关闭「自动切下一席」时使用）
+  clearMitmKeyExhausted: (AppHooks as any).ClearMitmKeyExhausted as (
+    apiKey: string,
+  ) => Promise<boolean>,
+  clearAllMitmExhausted: (AppHooks as any).ClearAllMitmExhausted as () => Promise<number>,
 };

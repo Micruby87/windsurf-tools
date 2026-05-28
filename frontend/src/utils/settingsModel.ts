@@ -42,6 +42,9 @@ export function createDefaultSettings(): models.Settings {
     quota_custom_interval_minutes: 360,
     auto_switch_plan_filter: 'all',
     auto_switch_on_quota_exhausted: true,
+    switch_strategy: 'fcfs',
+    switch_cooldown_enabled: false,
+    switch_cooldown_base_sec: 300,
     manual_pin_enabled: false,
     manual_pin_account_id: '',
     rotation_pool_enabled: false,
@@ -58,6 +61,12 @@ export function createDefaultSettings(): models.Settings {
     debug_log: false,
     import_concurrency: 3,
     forge_enabled: false,
+    fake_credits: 10000000,
+    fake_credits_premium: 150000,
+    fake_credits_other: 25000,
+    fake_credits_used: 0,
+    fake_subscription_type: 'Enterprise',
+    fake_billing_extend_years: 10,
     smart_friend_enabled: false, // F7-REMOVAL: 字段与下方 3 处同名赋值一并删除
     static_cache_intercept: true,
     mitm_jailbreak_enabled: false,
@@ -76,6 +85,11 @@ export function createDefaultSettings(): models.Settings {
     clash_rotate_on_rate_limit: true,
     clash_latency_test_url: 'http://www.gstatic.com/generate_204',
     clash_latency_max_ms: 800,
+    window_width: 0,
+    window_height: 0,
+    window_x: -1,
+    window_y: -1,
+    window_maximized: false,
   })
 }
 
@@ -94,6 +108,12 @@ export function normalizeSettings(raw: unknown): models.Settings {
     auto_switch_plan_filter: normalizeSwitchPlanFilter(String(s.auto_switch_plan_filter ?? 'all')),
     auto_switch_on_quota_exhausted:
       'auto_switch_on_quota_exhausted' in s ? Boolean(s.auto_switch_on_quota_exhausted) : true,
+    switch_strategy: normalizeSwitchStrategy(String(s.switch_strategy ?? 'fcfs')),
+    switch_cooldown_enabled:
+      'switch_cooldown_enabled' in s ? Boolean(s.switch_cooldown_enabled) : false,
+    switch_cooldown_base_sec: clampSwitchCooldownSec(
+      'switch_cooldown_base_sec' in s ? Number(s.switch_cooldown_base_sec) : 300,
+    ),
     manual_pin_enabled: 'manual_pin_enabled' in s ? Boolean(s.manual_pin_enabled) : false,
     manual_pin_account_id: String(s.manual_pin_account_id ?? ''),
     rotation_pool_enabled:
@@ -120,11 +140,33 @@ export function normalizeSettings(raw: unknown): models.Settings {
     debug_log: 'debug_log' in s ? Boolean(s.debug_log) : false,
     import_concurrency: Math.max(1, Math.min(20, Number(s.import_concurrency) || 3)),
     forge_enabled: 'forge_enabled' in s ? Boolean(s.forge_enabled) : false,
+    fake_credits: clampForgeCredits(
+      'fake_credits' in s ? Number(s.fake_credits) : 10000000,
+    ),
+    fake_credits_premium: clampForgeCredits(
+      'fake_credits_premium' in s ? Number(s.fake_credits_premium) : 150000,
+    ),
+    fake_credits_other: clampForgeCredits(
+      'fake_credits_other' in s ? Number(s.fake_credits_other) : 25000,
+    ),
+    fake_credits_used: clampForgeCredits(
+      'fake_credits_used' in s ? Number(s.fake_credits_used) : 0,
+    ),
+    fake_subscription_type:
+      'fake_subscription_type' in s
+        ? String(s.fake_subscription_type ?? 'Enterprise') || 'Enterprise'
+        : 'Enterprise',
+    fake_billing_extend_years: clampBillingYears(
+      'fake_billing_extend_years' in s ? Number(s.fake_billing_extend_years) : 10,
+    ),
     // F7-REMOVAL: 下一行删除
     smart_friend_enabled: 'smart_friend_enabled' in s ? Boolean(s.smart_friend_enabled) : false,
     static_cache_intercept: 'static_cache_intercept' in s ? Boolean(s.static_cache_intercept) : true,
     mitm_jailbreak_enabled: 'mitm_jailbreak_enabled' in s ? Boolean(s.mitm_jailbreak_enabled) : false,
     mitm_jailbreak_override: String(s.mitm_jailbreak_override ?? ''),
+    mitm_jailbreak_preset_id: String(s.mitm_jailbreak_preset_id ?? 'custom'),
+    mitm_jailbreak_override_source: String(s.mitm_jailbreak_override_source ?? 'inline'),
+    mitm_jailbreak_override_file: String(s.mitm_jailbreak_override_file ?? ''),
     mitm_full_capture: 'mitm_full_capture' in s ? Boolean(s.mitm_full_capture) : false,
     mitm_debug_dump: 'mitm_debug_dump' in s ? Boolean(s.mitm_debug_dump) : false,
     clash_rotate_enabled: 'clash_rotate_enabled' in s ? Boolean(s.clash_rotate_enabled) : false,
@@ -137,6 +179,11 @@ export function normalizeSettings(raw: unknown): models.Settings {
       'clash_rotate_on_rate_limit' in s ? Boolean(s.clash_rotate_on_rate_limit) : true,
     clash_latency_test_url: String(s.clash_latency_test_url ?? 'http://www.gstatic.com/generate_204'),
     clash_latency_max_ms: Math.max(0, Math.min(10000, Number(s.clash_latency_max_ms ?? 800))),
+    window_width: Math.max(0, Math.round(Number(s.window_width ?? 0))),
+    window_height: Math.max(0, Math.round(Number(s.window_height ?? 0))),
+    window_x: Math.round(Number(s.window_x ?? -1)),
+    window_y: Math.round(Number(s.window_y ?? -1)),
+    window_maximized: 'window_maximized' in s ? Boolean(s.window_maximized) : false,
   })
 }
 
@@ -205,6 +252,63 @@ export function clampClashInterval(min: number): number {
   return Math.min(60, Math.max(2, Math.round(min)))
 }
 
+/** F3 切号调度策略选项 */
+export const SWITCH_STRATEGY_OPTIONS: Array<{
+  value: string
+  label: string
+  description: string
+}> = [
+  {
+    value: 'fcfs',
+    label: '默认（凭证优先）',
+    description: '保留旧行为：按 Token > APIKey > RefreshToken > Password 顺序选号',
+  },
+  {
+    value: 'priority',
+    label: '优先消耗 Trial',
+    description: '先用 Trial（短期失效），再用 Pro/Max。适合 trial 号多的场景',
+  },
+  {
+    value: 'balanced',
+    label: '额度均衡',
+    description: '剩余 % 高的优先用，让所有号月底分布更均匀',
+  },
+]
+
+/** F3 调度策略字符串规整 */
+export function normalizeSwitchStrategy(v: string | undefined | null): string {
+  const s = String(v ?? '').trim().toLowerCase()
+  if (s === 'priority' || s === 'balanced') return s
+  return 'fcfs'
+}
+
+/** F3 冷却基础秒钳制：[30, 3600]，默认 300 */
+export function clampSwitchCooldownSec(n: number): number {
+  if (!Number.isFinite(n) || n <= 0) return 300
+  return Math.min(3600, Math.max(30, Math.round(n)))
+}
+
+/** P0: Forge credits 钳制：[0, 1e9]，默认 0（避免负数/NaN） */
+export function clampForgeCredits(n: number): number {
+  if (!Number.isFinite(n) || n < 0) return 0
+  return Math.min(1_000_000_000, Math.round(n))
+}
+
+/** P0: Forge billing 年数钳制：[0, 50]，默认 10 */
+export function clampBillingYears(n: number): number {
+  if (!Number.isFinite(n) || n < 0) return 10
+  return Math.min(50, Math.max(0, Math.round(n)))
+}
+
+/** Forge: 伪造订阅类型选项（与后端 forge 逻辑一致） */
+export const FAKE_SUBSCRIPTION_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'Enterprise', label: 'Enterprise (企业版)' },
+  { value: 'Pro', label: 'Pro (个人高级)' },
+  { value: 'Team', label: 'Team (团队)' },
+  { value: 'Trial', label: 'Trial (试用)' },
+  { value: 'Free', label: 'Free (免费)' },
+]
+
 /** RotationPool 定时切间隔（分钟），与后端钳制一致 [1,60] */
 export function clampRotationPoolInterval(min: number): number {
   if (!Number.isFinite(min) || min <= 0) {
@@ -232,6 +336,12 @@ export type SettingsForm = {
   auto_switch_plan_filter: string
   /** 额度用尽时自动切下一席（需开启定期同步额度） */
   auto_switch_on_quota_exhausted: boolean
+  /** F3 切号调度策略：fcfs / priority / balanced */
+  switch_strategy: string
+  /** F3 启用冷却惩罚：被 quota/ratelimit 切走的号在 base_sec 内不再被选回 */
+  switch_cooldown_enabled: boolean
+  /** F3 冷却基础秒数（指数退避：连续命中翻倍），范围 [30, 3600] */
+  switch_cooldown_base_sec: number
   /** 手动切号后自动锁定，所有 auto-switch 通道暂停 */
   manual_pin_enabled: boolean
   /** 锁定到的账号 ID（UUID） */
@@ -262,6 +372,18 @@ export type SettingsForm = {
   import_concurrency: number
   /** GetUserStatus/GetPlanStatus 伪造为 Enterprise + 无限积分 */
   forge_enabled: boolean
+  /** Forge: 伪造总 credits（账号总额度）。默认 10,000,000 */
+  fake_credits: number
+  /** Forge: 伪造 premium credits。默认 150,000 */
+  fake_credits_premium: number
+  /** Forge: 伪造 other / cascade credits。默认 25,000 */
+  fake_credits_other: number
+  /** Forge: 伪造已用。默认 0（让 IDE 显示未开始消耗） */
+  fake_credits_used: number
+  /** Forge: 伪造订阅类型。默认 'Enterprise' */
+  fake_subscription_type: string
+  /** Forge: 计费周期延长年数。默认 10 */
+  fake_billing_extend_years: number
   /** F7-REMOVAL: 下两行删除。SmartFriend 仅作者自用，发布前不保留字段。 */
   smart_friend_enabled: boolean
   /** 静态响应缓存拦截 (.bin 文件直返) */
@@ -290,6 +412,11 @@ export type SettingsForm = {
   clash_rotate_on_rate_limit: boolean
   clash_latency_test_url: string
   clash_latency_max_ms: number
+  window_width: number
+  window_height: number
+  window_x: number
+  window_y: number
+  window_maximized: boolean
 }
 
 export function settingsToForm(s: models.Settings): SettingsForm {
@@ -301,6 +428,11 @@ export function settingsToForm(s: models.Settings): SettingsForm {
     quota_custom_interval_minutes: clampQuotaMinutes(s.quota_custom_interval_minutes),
     auto_switch_plan_filter: normalizeSwitchPlanFilter(s.auto_switch_plan_filter),
     auto_switch_on_quota_exhausted: s.auto_switch_on_quota_exhausted !== false,
+    switch_strategy: normalizeSwitchStrategy(String((s as any).switch_strategy ?? 'fcfs')),
+    switch_cooldown_enabled: (s as any).switch_cooldown_enabled === true,
+    switch_cooldown_base_sec: clampSwitchCooldownSec(
+      Number((s as any).switch_cooldown_base_sec ?? 300),
+    ),
     manual_pin_enabled: (s as any).manual_pin_enabled === true,
     manual_pin_account_id: String((s as any).manual_pin_account_id ?? ''),
     rotation_pool_enabled: (s as any).rotation_pool_enabled === true,
@@ -319,6 +451,22 @@ export function settingsToForm(s: models.Settings): SettingsForm {
     debug_log: s.debug_log === true,
     import_concurrency: Math.max(1, Math.min(20, Number(s.import_concurrency) || 3)),
     forge_enabled: s.forge_enabled === true,
+    fake_credits: clampForgeCredits(Number((s as any).fake_credits ?? 10000000)),
+    fake_credits_premium: clampForgeCredits(
+      Number((s as any).fake_credits_premium ?? 150000),
+    ),
+    fake_credits_other: clampForgeCredits(
+      Number((s as any).fake_credits_other ?? 25000),
+    ),
+    fake_credits_used: clampForgeCredits(
+      Number((s as any).fake_credits_used ?? 0),
+    ),
+    fake_subscription_type: String(
+      (s as any).fake_subscription_type ?? 'Enterprise',
+    ) || 'Enterprise',
+    fake_billing_extend_years: clampBillingYears(
+      Number((s as any).fake_billing_extend_years ?? 10),
+    ),
     // F7-REMOVAL: 下一行删除
     smart_friend_enabled: s.smart_friend_enabled === true,
     static_cache_intercept: s.static_cache_intercept !== false,
@@ -340,6 +488,11 @@ export function settingsToForm(s: models.Settings): SettingsForm {
       s.clash_latency_test_url ?? 'http://www.gstatic.com/generate_204',
     ),
     clash_latency_max_ms: Math.max(0, Math.min(10000, Number(s.clash_latency_max_ms ?? 800))),
+    window_width: Math.max(0, Math.round(Number(s.window_width ?? 0))),
+    window_height: Math.max(0, Math.round(Number(s.window_height ?? 0))),
+    window_x: Math.round(Number(s.window_x ?? -1)),
+    window_y: Math.round(Number(s.window_y ?? -1)),
+    window_maximized: s.window_maximized === true,
   }
 }
 
@@ -352,6 +505,9 @@ export function formToSettings(form: SettingsForm): models.Settings {
     quota_custom_interval_minutes: clampQuotaMinutes(form.quota_custom_interval_minutes),
     auto_switch_plan_filter: normalizeSwitchPlanFilter(form.auto_switch_plan_filter),
     auto_switch_on_quota_exhausted: form.auto_switch_on_quota_exhausted,
+    switch_strategy: normalizeSwitchStrategy(form.switch_strategy),
+    switch_cooldown_enabled: form.switch_cooldown_enabled,
+    switch_cooldown_base_sec: clampSwitchCooldownSec(form.switch_cooldown_base_sec),
     manual_pin_enabled: form.manual_pin_enabled,
     manual_pin_account_id: (form.manual_pin_account_id ?? '').trim(),
     rotation_pool_enabled: form.rotation_pool_enabled,
@@ -370,6 +526,13 @@ export function formToSettings(form: SettingsForm): models.Settings {
     debug_log: form.debug_log,
     import_concurrency: Math.max(1, Math.min(20, Math.round(form.import_concurrency) || 3)),
     forge_enabled: form.forge_enabled,
+    fake_credits: clampForgeCredits(form.fake_credits),
+    fake_credits_premium: clampForgeCredits(form.fake_credits_premium),
+    fake_credits_other: clampForgeCredits(form.fake_credits_other),
+    fake_credits_used: clampForgeCredits(form.fake_credits_used),
+    fake_subscription_type:
+      (form.fake_subscription_type ?? 'Enterprise').trim() || 'Enterprise',
+    fake_billing_extend_years: clampBillingYears(form.fake_billing_extend_years),
     // F7-REMOVAL: 下一行删除
     smart_friend_enabled: form.smart_friend_enabled,
     static_cache_intercept: form.static_cache_intercept,
@@ -389,6 +552,11 @@ export function formToSettings(form: SettingsForm): models.Settings {
     clash_rotate_on_rate_limit: form.clash_rotate_on_rate_limit,
     clash_latency_test_url: (form.clash_latency_test_url ?? '').trim() || 'http://www.gstatic.com/generate_204',
     clash_latency_max_ms: Math.max(0, Math.min(10000, Math.round(form.clash_latency_max_ms) || 0)),
+    window_width: Math.max(0, Math.round(form.window_width) || 0),
+    window_height: Math.max(0, Math.round(form.window_height) || 0),
+    window_x: Math.round(form.window_x ?? -1),
+    window_y: Math.round(form.window_y ?? -1),
+    window_maximized: form.window_maximized,
   })
 }
 

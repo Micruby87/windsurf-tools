@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import {
   Activity,
   AlertCircle,
   ArrowRight,
   CheckCircle2,
   ChevronRight,
+  Copy,
   Globe,
   Link2,
   Play,
@@ -17,6 +18,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { APIInfo } from "../api/wails";
+import DashboardMetrics from "../components/DashboardMetrics";
 import F7Banner from "../components/F7Banner";
 import MitmPanel from "../components/MitmPanel";
 import PageLoadingSkeleton from "../components/common/PageLoadingSkeleton";
@@ -27,6 +29,7 @@ import { useAccountStore } from "../stores/useAccountStore";
 import { useMainViewStore } from "../stores/useMainViewStore";
 import { useMitmStatusStore } from "../stores/useMitmStatusStore";
 import { useRelayStatusStore } from "../stores/useRelayStatusStore";
+import { useMergedTasks, useTaskStore, type Task } from "../stores/useTaskStore";
 import {
   getAccountHealth,
   isWeeklyQuotaBlocked,
@@ -50,6 +53,21 @@ type DiagnoseReportData = {
   error: number;
   checks: DiagnoseCheckItem[];
 };
+type HealthTone = "ok" | "warn" | "error" | "info";
+type HealthCenterItem = {
+  key: string;
+  title: string;
+  detail: string;
+  tone: HealthTone;
+  icon: ComponentType<{ className?: string; strokeWidth?: number | string }>;
+  actionLabel?: string;
+  onAction?: () => void;
+};
+type DiagnosticAction = {
+  key: string;
+  label: string;
+  onClick: () => void;
+};
 
 const diagnoseStatusClass = (s: DiagnoseStatus): string => {
   switch (s) {
@@ -64,6 +82,93 @@ const diagnoseStatusClass = (s: DiagnoseStatus): string => {
   }
 };
 
+const diagnoseStatusLabel: Record<DiagnoseStatus, string> = {
+  ok: "通过",
+  warn: "警告",
+  error: "错误",
+  "n/a": "不适用",
+};
+
+const healthToneClass: Record<HealthTone, string> = {
+  ok: "border-emerald-500/15 bg-emerald-500/[0.06]",
+  warn: "border-amber-500/20 bg-amber-500/[0.07]",
+  error: "border-rose-500/20 bg-rose-500/[0.08]",
+  info: "border-sky-500/15 bg-sky-500/[0.06]",
+};
+
+const healthIconClass: Record<HealthTone, string> = {
+  ok: "bg-emerald-500/12 text-emerald-600 dark:text-emerald-300",
+  warn: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
+  error: "bg-rose-500/12 text-rose-700 dark:text-rose-300",
+  info: "bg-sky-500/12 text-sky-700 dark:text-sky-300",
+};
+
+const healthPillClass: Record<HealthTone, string> = {
+  ok: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
+  warn: "bg-amber-500/12 text-amber-800 dark:text-amber-300",
+  error: "bg-rose-500/12 text-rose-700 dark:text-rose-300",
+  info: "bg-sky-500/12 text-sky-700 dark:text-sky-300",
+};
+
+function diagnoseSearchText(c: DiagnoseCheckItem): string {
+  return `${c.id} ${c.title} ${c.detail} ${c.fix_hint || ""}`.toLowerCase();
+}
+
+function isCertDiagnostic(c: DiagnoseCheckItem): boolean {
+  const text = diagnoseSearchText(c);
+  return c.id === "cert" || text.includes("证书") || /(^|[^a-z])ca([^a-z]|$)/.test(text);
+}
+
+function isHostsDiagnostic(c: DiagnoseCheckItem): boolean {
+  return diagnoseSearchText(c).includes("hosts");
+}
+
+function isClashDiagnostic(c: DiagnoseCheckItem): boolean {
+  const text = diagnoseSearchText(c);
+  return c.id === "clash" || text.includes("clash") || text.includes("mihomo");
+}
+
+function isRelayDiagnostic(c: DiagnoseCheckItem): boolean {
+  const text = diagnoseSearchText(c);
+  return c.id === "relay" || text.includes("relay") || text.includes("openai");
+}
+
+function buildDiagnosticsReportText(report: DiagnoseReportData): string {
+  const lines = [
+    "Windsurf Tools 平台兼容性检查",
+    `平台: ${report.platform}`,
+    `架构: ${report.arch}`,
+    `汇总: ${report.ok} 通过 / ${report.warn} 警告 / ${report.error} 错误`,
+    "",
+  ];
+  for (const c of report.checks) {
+    lines.push(`[${diagnoseStatusLabel[c.status] || c.status}] ${c.title}`);
+    lines.push(`详情: ${c.detail}`);
+    if (c.fix_hint) lines.push(`建议: ${c.fix_hint}`);
+    lines.push("");
+  }
+  return lines.join("\n").trimEnd();
+}
+
+function taskFailureLines(tasks: Task[]): string[] {
+  const failedTasks = tasks.filter((t) => t.failed > 0);
+  if (failedTasks.length === 0) return ["暂无失败任务"];
+  const lines: string[] = [];
+  for (const task of failedTasks.slice(0, 5)) {
+    lines.push(
+      `- ${task.title}: ${task.failed} 失败 / ${task.succeeded} 成功 / ${task.completed}/${task.total}`,
+    );
+    const failedItems = task.items.filter((it) => it.status === "failed").slice(0, 5);
+    for (const item of failedItems) {
+      lines.push(`  - ${item.name}${item.detail ? ` — ${item.detail}` : ""}`);
+    }
+  }
+  if (failedTasks.length > 5) {
+    lines.push(`- 另有 ${failedTasks.length - 5} 个失败任务未展开`);
+  }
+  return lines;
+}
+
 /**
  * Dashboard — Vue 1:1 完整迁移。
  * hero header / 5 summary 卡 / F7Banner / MitmPanel / onboarding 3 步 /
@@ -76,15 +181,24 @@ export default function Dashboard() {
   const mitmHasLoadedOnce = useMitmStatusStore((s) => s.hasLoadedOnce);
   const relayStatus = useRelayStatusStore((s) => s.status);
   const relayHasLoadedOnce = useRelayStatusStore((s) => s.hasLoadedOnce);
+  const tasks = useMergedTasks();
+  const openTaskDrawer = useTaskStore((s) => s.setOpen);
   const setActiveTab = useMainViewStore((s) => s.setActiveTab);
+  const dashboardDiagnosticsRequestSeq = useMainViewStore(
+    (s) => s.dashboardDiagnosticsRequestSeq,
+  );
   const sf = useSmartFriend();
 
   const [refreshing, setRefreshing] = useState(false);
   const [diagnostics, setDiagnostics] = useState<DiagnoseReportData | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [troubleshootingLoading, setTroubleshootingLoading] = useState(false);
+  const [healthExpanded, setHealthExpanded] = useState(true);
+  const [healthOnlyIssues, setHealthOnlyIssues] = useState(false);
 
   const mitmPanelRef = useRef<HTMLDivElement | null>(null);
+  const handledDiagnosticsRequestSeqRef = useRef(0);
 
   useEffect(() => {
     void Promise.all([
@@ -107,7 +221,7 @@ export default function Dashboard() {
     }
   };
 
-  const handleRunDiagnostics = async () => {
+  const handleRunDiagnostics = useCallback(async () => {
     setDiagnosticsLoading(true);
     try {
       const r = (await APIInfo.runDiagnostics()) as DiagnoseReportData;
@@ -126,7 +240,31 @@ export default function Dashboard() {
     } finally {
       setDiagnosticsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (
+      dashboardDiagnosticsRequestSeq === 0 ||
+      handledDiagnosticsRequestSeqRef.current === dashboardDiagnosticsRequestSeq
+    ) {
+      return;
+    }
+    handledDiagnosticsRequestSeqRef.current = dashboardDiagnosticsRequestSeq;
+    void handleRunDiagnostics();
+  }, [dashboardDiagnosticsRequestSeq, handleRunDiagnostics]);
+
+  const handleCopyDiagnostics = useCallback(async () => {
+    if (!diagnostics) {
+      showToast("暂无诊断报告可复制", "warning");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(buildDiagnosticsReportText(diagnostics));
+      showToast("诊断报告已复制", "success");
+    } catch (e) {
+      showErrorToast(e, "复制诊断报告失败");
+    }
+  }, [diagnostics]);
 
   const booting = !accHasLoadedOnce || !mitmHasLoadedOnce || !relayHasLoadedOnce;
 
@@ -153,6 +291,78 @@ export default function Dashboard() {
     [mitmStatus],
   );
   const relayRunning = relayStatus?.running === true;
+  const failedTaskCount = useMemo(
+    () => tasks.reduce((sum, task) => sum + task.failed, 0),
+    [tasks],
+  );
+  const runningTaskCount = useMemo(
+    () => tasks.filter((task) => task.running).length,
+    [tasks],
+  );
+
+  const handleCopyTroubleshootingBundle = useCallback(async () => {
+    setTroubleshootingLoading(true);
+    try {
+      const report = (await APIInfo.runDiagnostics()) as DiagnoseReportData;
+      setDiagnostics(report);
+      const currentActiveKey =
+        mitmStatus?.pool_status?.find((i) => i.is_current) ?? null;
+      const lines = [
+        "Windsurf Tools 排障包",
+        `生成时间: ${new Date().toLocaleString()}`,
+        "",
+        "== 运行状态 ==",
+        `MITM: ${mitmStatus?.running ? "运行中" : "未启动"}`,
+        `CA: ${mitmStatus?.ca_installed ? "已信任" : "未信任"}`,
+        `Hosts: ${mitmStatus?.hosts_mapped ? "已映射" : "未映射"}`,
+        `活跃账号: ${
+          currentActiveKey?.nickname ||
+          currentActiveKey?.email ||
+          currentActiveKey?.key_short ||
+          "无"
+        }`,
+        `活跃会话: ${mitmStatus?.session_count ?? 0}`,
+        `代理请求: ${mitmStatus?.total_requests ?? 0}`,
+        `Relay: ${
+          relayRunning
+            ? `运行中 (${relayStatus?.url || `127.0.0.1:${relayStatus?.port || 8787}`})`
+            : "未启动"
+        }`,
+        "",
+        "== 号池 ==",
+        `总数: ${totalAccounts}`,
+        `健康: ${healthyAccounts}`,
+        `额度告急: ${criticalAccounts}`,
+        `已过期: ${expiredAccounts}`,
+        `周额度阻断: ${blockedAccounts}`,
+        `F7/SmartFriend: ${sf.active ? "启用" : "关闭"}`,
+        "",
+        "== 任务失败摘要 ==",
+        ...taskFailureLines(tasks),
+        "",
+        "== 平台兼容性诊断 ==",
+        buildDiagnosticsReportText(report),
+      ];
+      await navigator.clipboard.writeText(lines.join("\n"));
+      showToast("排障包已复制", "success");
+    } catch (e) {
+      showErrorToast(e, "复制排障包失败");
+    } finally {
+      setTroubleshootingLoading(false);
+    }
+  }, [
+    blockedAccounts,
+    criticalAccounts,
+    expiredAccounts,
+    healthyAccounts,
+    mitmStatus,
+    relayRunning,
+    relayStatus?.port,
+    relayStatus?.url,
+    sf.active,
+    tasks,
+    totalAccounts,
+  ]);
 
   const topSummaryCards: Array<{
     key: string;
@@ -176,9 +386,11 @@ export default function Dashboard() {
       label: "MITM 状态",
       value: mitmStatus?.running ? "运行中" : "未启动",
       detail: mitmStatus?.running
-        ? activeKey?.key_short
-          ? `当前 ${truncateMiddle(activeKey.key_short, 10, 5)}`
-          : "等待活跃 Key"
+        ? activeKey?.nickname || activeKey?.email
+          ? `当前 ${activeKey.nickname || activeKey.email}`
+          : activeKey?.key_short
+            ? `当前 ${truncateMiddle(activeKey.key_short, 10, 5)}`
+            : "等待活跃 Key"
         : "先完成证书、Hosts 与启用",
       tone: mitmStatus?.running
         ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
@@ -256,6 +468,210 @@ export default function Dashboard() {
     });
   };
 
+  const scrollToMitmAnchor = (anchor: "ca" | "hosts") => {
+    setShowDiagnostics(false);
+    window.setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(
+        `[data-health-anchor="mitm-${anchor}"]`,
+      );
+      (el ?? mitmPanelRef.current)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 80);
+    showToast(anchor === "ca" ? "已定位到 MITM 证书区" : "已定位到 MITM Hosts 区", "info");
+  };
+
+  const openClashSettings = () => {
+    setShowDiagnostics(false);
+    setActiveTab("Settings");
+    window.setTimeout(() => {
+      document
+        .querySelector<HTMLElement>('[data-health-anchor="clash-settings"]')
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 160);
+    showToast("已打开 Settings / Clash 助手", "info");
+  };
+
+  const openRelayPage = () => {
+    setShowDiagnostics(false);
+    setActiveTab("Relay");
+    showToast("已打开 Relay 页", "info");
+  };
+
+  const copyDiagnosticHint = async (c: DiagnoseCheckItem) => {
+    const text = c.fix_hint || c.detail;
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(c.fix_hint ? "修复建议已复制" : "诊断详情已复制", "success");
+    } catch (e) {
+      showErrorToast(e, "复制诊断建议失败");
+    }
+  };
+
+  const diagnosticActionsFor = (c: DiagnoseCheckItem): DiagnosticAction[] => {
+    const actions: DiagnosticAction[] = [];
+    if (isCertDiagnostic(c)) {
+      actions.push({
+        key: "cert",
+        label: "证书区",
+        onClick: () => scrollToMitmAnchor("ca"),
+      });
+    }
+    if (isHostsDiagnostic(c)) {
+      actions.push({
+        key: "hosts",
+        label: "Hosts 区",
+        onClick: () => scrollToMitmAnchor("hosts"),
+      });
+    }
+    if (isClashDiagnostic(c)) {
+      actions.push({ key: "clash", label: "Clash 助手", onClick: openClashSettings });
+    }
+    if (isRelayDiagnostic(c)) {
+      actions.push({ key: "relay", label: "Relay 页", onClick: openRelayPage });
+    }
+    if (c.status !== "ok") {
+      actions.push({
+        key: "rerun",
+        label: "重新检查",
+        onClick: () => void handleRunDiagnostics(),
+      });
+    }
+    actions.push({
+      key: "copy",
+      label: c.fix_hint ? "复制建议" : "复制详情",
+      onClick: () => void copyDiagnosticHint(c),
+    });
+    return actions;
+  };
+
+  const healthItems: HealthCenterItem[] = [
+    {
+      key: "setup",
+      title: "接管链路",
+      detail: setupReady
+        ? "CA 与 Hosts 已就绪"
+        : !caReady && !hostsReady
+          ? "CA 与 Hosts 都未完成"
+          : !caReady
+            ? "CA 证书未信任"
+            : "Hosts 未映射",
+      tone: setupReady ? "ok" : "error",
+      icon: ShieldCheck,
+      actionLabel: setupReady ? undefined : "去配置",
+      onAction: setupReady ? undefined : scrollToMitm,
+    },
+    {
+      key: "mitm",
+      title: "MITM 代理",
+      detail: mitmRunning
+        ? activeKey?.nickname || activeKey?.email || activeKey?.key_short
+          ? `运行中 · ${activeKey.nickname || activeKey.email || activeKey.key_short}`
+          : "运行中 · 等待活跃 Key"
+        : setupReady
+          ? "已具备启动条件"
+          : "需先完成接管链路",
+      tone: mitmRunning ? "ok" : setupReady ? "warn" : "info",
+      icon: Activity,
+      actionLabel: mitmRunning ? undefined : "打开面板",
+      onAction: mitmRunning ? undefined : scrollToMitm,
+    },
+    {
+      key: "pool",
+      title: "号池健康",
+      detail:
+        totalAccounts === 0
+          ? "暂无账号"
+          : blockedAccounts > 0 || expiredAccounts > 0
+            ? `需处理 ${blockedAccounts + expiredAccounts} 个风险账号`
+            : criticalAccounts > 0
+              ? `${criticalAccounts} 个账号额度告急`
+              : `健康 ${healthyAccounts}/${totalAccounts}`,
+      tone:
+        totalAccounts === 0 || blockedAccounts > 0 || expiredAccounts > 0
+          ? "error"
+          : criticalAccounts > 0
+            ? "warn"
+            : "ok",
+      icon: Users,
+      actionLabel:
+        totalAccounts === 0 || blockedAccounts > 0 || expiredAccounts > 0 || criticalAccounts > 0
+          ? "看号池"
+          : undefined,
+      onAction:
+        totalAccounts === 0 || blockedAccounts > 0 || expiredAccounts > 0 || criticalAccounts > 0
+          ? () => setActiveTab("Accounts")
+          : undefined,
+    },
+    {
+      key: "relay",
+      title: "OpenAI Relay",
+      detail: relayRunning
+        ? relayStatus?.url || `127.0.0.1:${relayStatus?.port || 8787}`
+        : "未启动 · 按需启用",
+      tone: relayRunning ? "ok" : "info",
+      icon: Globe,
+      actionLabel: relayRunning ? undefined : "去 Relay",
+      onAction: relayRunning ? undefined : () => setActiveTab("Relay"),
+    },
+    {
+      key: "tasks",
+      title: "任务失败",
+      detail:
+        failedTaskCount > 0
+          ? `${failedTaskCount} 条失败明细`
+          : runningTaskCount > 0
+            ? `${runningTaskCount} 个任务运行中`
+            : "暂无失败任务",
+      tone: failedTaskCount > 0 ? "warn" : runningTaskCount > 0 ? "info" : "ok",
+      icon: failedTaskCount > 0 ? TriangleAlert : CheckCircle2,
+      actionLabel: failedTaskCount > 0 || runningTaskCount > 0 ? "打开任务" : undefined,
+      onAction:
+        failedTaskCount > 0 || runningTaskCount > 0
+          ? () => openTaskDrawer(true)
+          : undefined,
+    },
+    {
+      key: "diagnostics",
+      title: "平台诊断",
+      detail: diagnostics
+        ? `${diagnostics.ok} 通过 / ${diagnostics.warn} 警告 / ${diagnostics.error} 错误`
+        : "尚未运行本次诊断",
+      tone: diagnostics
+        ? diagnostics.error > 0
+          ? "error"
+          : diagnostics.warn > 0
+            ? "warn"
+            : "ok"
+        : "info",
+      icon: diagnostics?.error ? XCircle : ShieldCheck,
+      actionLabel: "检查",
+      onAction: () => void handleRunDiagnostics(),
+    },
+  ];
+  const healthSummaryTone: HealthTone = healthItems.some((item) => item.tone === "error")
+    ? "error"
+    : healthItems.some((item) => item.tone === "warn")
+      ? "warn"
+      : healthItems.some((item) => item.tone === "info")
+        ? "info"
+        : "ok";
+  const healthSummaryText =
+    healthSummaryTone === "error"
+      ? "存在阻断项"
+      : healthSummaryTone === "warn"
+        ? "有待处理项"
+        : healthSummaryTone === "info"
+          ? "可继续完善"
+          : "全部稳定";
+  const healthIssueCount = healthItems.filter(
+    (item) => item.tone === "error" || item.tone === "warn",
+  ).length;
+  const visibleHealthItems = healthOnlyIssues
+    ? healthItems.filter((item) => item.tone === "error" || item.tone === "warn")
+    : healthItems;
+
   const onboardingStepsRaw = [
     {
       key: "import",
@@ -266,8 +682,9 @@ export default function Dashboard() {
         : "粘贴 API Key / JWT / 邮箱密码，自动识别格式入池。",
       done: hasAccount,
       icon: Plus,
-      cta: hasAccount ? "再导一批" : "去导入",
-      onClick: () => setActiveTab("Accounts"),
+      cta: hasAccount ? "再导一批" : "立即导入",
+      // 1.6: 直接调起全局 ImportModal，不必先切到 Accounts 页。
+      onClick: () => useMainViewStore.getState().openImportModal(),
     },
     {
       key: "ca-hosts",
@@ -360,6 +777,20 @@ export default function Dashboard() {
                 </button>
                 <button
                   type="button"
+                  className="no-drag-region inline-flex items-center gap-2 rounded-full border border-emerald-500/15 bg-emerald-500/10 px-4 py-2 text-[12px] font-semibold text-emerald-700 shadow-sm transition-all ios-btn hover:bg-emerald-500/15 disabled:opacity-50 dark:text-emerald-300"
+                  disabled={troubleshootingLoading}
+                  onClick={handleCopyTroubleshootingBundle}
+                >
+                  <Copy
+                    className={`h-3.5 w-3.5 ${
+                      troubleshootingLoading ? "animate-spin" : ""
+                    }`}
+                    strokeWidth={2.4}
+                  />
+                  {troubleshootingLoading ? "整理中..." : "复制排障包"}
+                </button>
+                <button
+                  type="button"
                   className="no-drag-region inline-flex items-center gap-2 rounded-full border border-black/[0.06] bg-white/80 px-4 py-2 text-[12px] font-semibold text-ios-text shadow-sm transition-all ios-btn hover:bg-black/[0.04] disabled:opacity-50 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-ios-textDark"
                   disabled={refreshing}
                   onClick={refreshOverview}
@@ -408,6 +839,9 @@ export default function Dashboard() {
           </div>
         </section>
 
+        {/* F2: 切号历史趋势卡（24h 折线 + 原因分布 + Top 账号） */}
+        <DashboardMetrics />
+
         {/* 主区 grid: MitmPanel | (onboarding + actions + warning) */}
         <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.25fr)_360px]">
           <div ref={mitmPanelRef} className="min-w-0">
@@ -415,6 +849,128 @@ export default function Dashboard() {
           </div>
 
           <div className="space-y-6">
+            <div className="ios-glass rounded-[24px] border border-black/[0.05] p-5 shadow-[0_16px_36px_-22px_rgba(15,23,42,0.18)] dark:border-white/[0.06]">
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <div
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl ${healthIconClass[healthSummaryTone]}`}
+                  >
+                    {healthSummaryTone === "error" ? (
+                      <XCircle className="h-4 w-4" strokeWidth={2.4} />
+                    ) : healthSummaryTone === "warn" ? (
+                      <TriangleAlert className="h-4 w-4" strokeWidth={2.4} />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4" strokeWidth={2.4} />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <div className="text-[13px] font-bold text-ios-text dark:text-ios-textDark">
+                        健康中心
+                      </div>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${healthPillClass[healthSummaryTone]}`}
+                      >
+                        {healthSummaryText}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+                      {healthIssueCount > 0
+                        ? `${healthIssueCount} 项需要关注，优先处理红色与黄色项。`
+                        : "关键链路暂无高风险项。"}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <button
+                    type="button"
+                    className="no-drag-region inline-flex items-center gap-1.5 rounded-full border border-black/[0.06] bg-white/70 px-2.5 py-1.5 text-[11px] font-semibold text-ios-text shadow-sm transition-all ios-btn hover:bg-black/[0.04] disabled:opacity-50 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-ios-textDark"
+                    disabled={troubleshootingLoading}
+                    onClick={handleCopyTroubleshootingBundle}
+                  >
+                    <Copy
+                      className={`h-3.5 w-3.5 ${
+                        troubleshootingLoading ? "animate-spin" : ""
+                      }`}
+                      strokeWidth={2.4}
+                    />
+                    复制
+                  </button>
+                  <button
+                    type="button"
+                    className="no-drag-region rounded-full border border-black/[0.06] bg-white/70 px-2.5 py-1.5 text-[11px] font-semibold text-ios-text shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-ios-textDark"
+                    onClick={() => setHealthExpanded((v) => !v)}
+                  >
+                    {healthExpanded ? "折叠" : "展开"}
+                  </button>
+                </div>
+              </div>
+
+              {healthExpanded ? (
+                <>
+                  <div className="mb-3 flex items-center justify-between gap-3 rounded-[14px] border border-black/[0.04] bg-black/[0.02] px-3 py-2 dark:border-white/[0.06] dark:bg-white/[0.03]">
+                    <span className="text-[11px] font-semibold text-ios-textSecondary dark:text-ios-textSecondaryDark">
+                      {healthOnlyIssues
+                        ? `只显示异常项 · ${visibleHealthItems.length}/${healthItems.length}`
+                        : `显示全部 · ${healthItems.length} 项`}
+                    </span>
+                    <button
+                      type="button"
+                      className="no-drag-region rounded-full bg-white/70 px-2.5 py-1 text-[10px] font-bold text-ios-text shadow-sm transition-all ios-btn hover:bg-white dark:bg-white/[0.08] dark:text-ios-textDark dark:hover:bg-white/[0.12]"
+                      onClick={() => setHealthOnlyIssues((v) => !v)}
+                    >
+                      {healthOnlyIssues ? "显示全部" : "只看异常"}
+                    </button>
+                  </div>
+                  <div className="space-y-2.5">
+                    {visibleHealthItems.length === 0 ? (
+                      <div className="rounded-[16px] border border-emerald-500/15 bg-emerald-500/[0.06] px-3 py-4 text-center text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                        暂无异常项，可以切回“显示全部”查看完整状态。
+                      </div>
+                    ) : null}
+                    {visibleHealthItems.map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <div
+                          key={item.key}
+                          className={`rounded-[16px] border px-3 py-3 ${healthToneClass[item.tone]}`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div
+                              className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${healthIconClass[item.tone]}`}
+                            >
+                              <Icon className="h-3.5 w-3.5" strokeWidth={2.5} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[12.5px] font-bold text-ios-text dark:text-ios-textDark">
+                                {item.title}
+                              </div>
+                              <div className="mt-0.5 truncate text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+                                {item.detail}
+                              </div>
+                            </div>
+                            {item.actionLabel && item.onAction ? (
+                              <button
+                                type="button"
+                                className="no-drag-region shrink-0 rounded-full bg-white/70 px-2.5 py-1 text-[10px] font-bold text-ios-text shadow-sm transition-all ios-btn hover:bg-white dark:bg-white/[0.08] dark:text-ios-textDark dark:hover:bg-white/[0.12]"
+                                onClick={item.onAction}
+                              >
+                                {item.actionLabel}
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-[16px] border border-black/[0.04] bg-black/[0.02] px-3 py-3 text-[11px] leading-relaxed text-ios-textSecondary dark:border-white/[0.06] dark:bg-white/[0.03] dark:text-ios-textSecondaryDark">
+                  已折叠 · {healthIssueCount > 0 ? `${healthIssueCount} 项需要关注` : "暂无异常项"}。
+                </div>
+              )}
+            </div>
+
             {/* onboarding */}
             <div className="ios-glass rounded-[24px] border border-black/[0.05] p-5 shadow-[0_16px_36px_-22px_rgba(15,23,42,0.18)] dark:border-white/[0.06]">
               <div className="flex items-center gap-2">
@@ -598,60 +1154,91 @@ export default function Dashboard() {
                   {diagnostics.error}
                 </p>
               </div>
-              <button
-                type="button"
-                className="rounded-full p-2 hover:bg-black/5 dark:hover:bg-white/10 ios-btn"
-                onClick={() => setShowDiagnostics(false)}
-              >
-                <X className="h-4 w-4" strokeWidth={2.4} />
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  className="no-drag-region inline-flex items-center gap-1.5 rounded-full border border-black/[0.06] bg-white/80 px-3 py-1.5 text-[11px] font-semibold text-ios-text shadow-sm hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-ios-textDark dark:hover:bg-white/[0.08] ios-btn"
+                  onClick={handleCopyDiagnostics}
+                >
+                  <Copy className="h-3.5 w-3.5" strokeWidth={2.4} />
+                  复制报告
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full p-2 hover:bg-black/5 dark:hover:bg-white/10 ios-btn"
+                  onClick={() => setShowDiagnostics(false)}
+                  aria-label="关闭诊断报告"
+                >
+                  <X className="h-4 w-4" strokeWidth={2.4} />
+                </button>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto p-5 space-y-3">
-              {diagnostics.checks.map((c) => (
-                <div
-                  key={c.id}
-                  className={`rounded-[14px] border p-3 ${diagnoseStatusClass(c.status)}`}
-                >
-                  <div className="flex items-start gap-2">
-                    <div className="mt-0.5">
-                      {c.status === "ok" ? (
-                        <CheckCircle2
-                          className="h-4 w-4 text-emerald-600 dark:text-emerald-300"
-                          strokeWidth={2.4}
-                        />
-                      ) : c.status === "error" ? (
-                        <XCircle
-                          className="h-4 w-4 text-rose-600 dark:text-rose-300"
-                          strokeWidth={2.4}
-                        />
-                      ) : c.status === "warn" ? (
-                        <TriangleAlert
-                          className="h-4 w-4 text-amber-600 dark:text-amber-300"
-                          strokeWidth={2.4}
-                        />
-                      ) : (
-                        <AlertCircle
-                          className="h-4 w-4 text-gray-500"
-                          strokeWidth={2.4}
-                        />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[13px] font-bold text-ios-text dark:text-ios-textDark">
-                        {c.title}
+              {diagnostics.checks.map((c) => {
+                const actions = diagnosticActionsFor(c);
+                return (
+                  <div
+                    key={c.id}
+                    className={`rounded-[14px] border p-3 ${diagnoseStatusClass(c.status)}`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className="mt-0.5">
+                        {c.status === "ok" ? (
+                          <CheckCircle2
+                            className="h-4 w-4 text-emerald-600 dark:text-emerald-300"
+                            strokeWidth={2.4}
+                          />
+                        ) : c.status === "error" ? (
+                          <XCircle
+                            className="h-4 w-4 text-rose-600 dark:text-rose-300"
+                            strokeWidth={2.4}
+                          />
+                        ) : c.status === "warn" ? (
+                          <TriangleAlert
+                            className="h-4 w-4 text-amber-600 dark:text-amber-300"
+                            strokeWidth={2.4}
+                          />
+                        ) : (
+                          <AlertCircle
+                            className="h-4 w-4 text-gray-500 dark:text-gray-400"
+                            strokeWidth={2.4}
+                          />
+                        )}
                       </div>
-                      <div className="mt-1 text-[11.5px] leading-relaxed text-ios-textSecondary dark:text-ios-textSecondaryDark">
-                        {c.detail}
-                      </div>
-                      {c.fix_hint ? (
-                        <div className="mt-2 rounded-[10px] bg-black/[0.04] dark:bg-white/[0.06] px-2.5 py-1.5 text-[11px] text-ios-text dark:text-ios-textDark">
-                          💡 {c.fix_hint}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-[13px] font-bold text-ios-text dark:text-ios-textDark">
+                            {c.title}
+                          </div>
+                          <span className="rounded-full bg-black/[0.04] px-2 py-0.5 text-[10px] font-mono text-ios-textSecondary dark:bg-white/[0.06] dark:text-ios-textSecondaryDark">
+                            {c.id}
+                          </span>
                         </div>
-                      ) : null}
+                        <div className="mt-1 text-[11.5px] leading-relaxed text-ios-textSecondary dark:text-ios-textSecondaryDark">
+                          {c.detail}
+                        </div>
+                        {c.fix_hint ? (
+                          <div className="mt-2 rounded-[10px] bg-black/[0.04] dark:bg-white/[0.06] px-2.5 py-1.5 text-[11px] text-ios-text dark:text-ios-textDark">
+                            💡 {c.fix_hint}
+                          </div>
+                        ) : null}
+                        <div className="mt-2.5 flex flex-wrap gap-1.5">
+                          {actions.map((action) => (
+                            <button
+                              key={action.key}
+                              type="button"
+                              className="no-drag-region rounded-full border border-black/[0.06] bg-white/70 px-2.5 py-1 text-[10px] font-bold text-ios-text shadow-sm transition-all ios-btn hover:bg-white dark:border-white/[0.08] dark:bg-white/[0.06] dark:text-ios-textDark dark:hover:bg-white/[0.10]"
+                              onClick={action.onClick}
+                            >
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

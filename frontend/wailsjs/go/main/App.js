@@ -34,6 +34,18 @@ export function CleanupWindsurf(arg1) {
   return window['go']['main']['App']['CleanupWindsurf'](arg1);
 }
 
+export function ClearAllMitmExhausted() {
+  return window['go']['main']['App']['ClearAllMitmExhausted']();
+}
+
+export function ClearFinishedTasks() {
+  return window['go']['main']['App']['ClearFinishedTasks']();
+}
+
+export function ClearMitmKeyExhausted(arg1) {
+  return window['go']['main']['App']['ClearMitmKeyExhausted'](arg1);
+}
+
 export function DeleteAccount(arg1) {
   return window['go']['main']['App']['DeleteAccount'](arg1);
 }
@@ -70,12 +82,12 @@ export function GetAllAccounts() {
   return window['go']['main']['App']['GetAllAccounts']();
 }
 
-export function GetCaptureDir() {
-  return window['go']['main']['App']['GetCaptureDir']();
-}
-
 export function GetClashRotatorRunning() {
   return window['go']['main']['App']['GetClashRotatorRunning']();
+}
+
+export function GetDashboardMetrics() {
+  return window['go']['main']['App']['GetDashboardMetrics']();
 }
 
 export function GetJailbreakDefaultOverride() {
@@ -92,10 +104,6 @@ export function GetManualPinStatus() {
 
 export function GetMitmCAPath() {
   return window['go']['main']['App']['GetMitmCAPath']();
-}
-
-export function GetMitmDebugDumpEnabled() {
-  return window['go']['main']['App']['GetMitmDebugDumpEnabled']();
 }
 
 export function GetMitmFullCaptureEnabled() {
@@ -118,10 +126,6 @@ export function GetPerformanceTips() {
   return window['go']['main']['App']['GetPerformanceTips']();
 }
 
-export function GetProtoDumpDir() {
-  return window['go']['main']['App']['GetProtoDumpDir']();
-}
-
 export function GetRotationPoolStatus() {
   return window['go']['main']['App']['GetRotationPoolStatus']();
 }
@@ -130,8 +134,8 @@ export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }
 
-export function GetStaticCacheDir() {
-  return window['go']['main']['App']['GetStaticCacheDir']();
+export function GetTasks() {
+  return window['go']['main']['App']['GetTasks']();
 }
 
 export function GetUsageRecords(arg1) {
@@ -202,8 +206,20 @@ export function ResetJailbreakStats() {
   return window['go']['main']['App']['ResetJailbreakStats']();
 }
 
+export function RestoreWindowGeometry() {
+  return window['go']['main']['App']['RestoreWindowGeometry']();
+}
+
+export function RevealCaptureDir() {
+  return window['go']['main']['App']['RevealCaptureDir']();
+}
+
 export function RevealJailbreakOverrideFolder() {
   return window['go']['main']['App']['RevealJailbreakOverrideFolder']();
+}
+
+export function RevealProtoDumpDir() {
+  return window['go']['main']['App']['RevealProtoDumpDir']();
 }
 
 export function RotationPoolRefreshQuotasNow() {
@@ -220,6 +236,14 @@ export function RunDiagnostics() {
 
 export function SaveJailbreakOverrideFile(arg1) {
   return window['go']['main']['App']['SaveJailbreakOverrideFile'](arg1);
+}
+
+export function SaveWindowGeometry(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SaveWindowGeometry'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SendDesktopNotification(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SendDesktopNotification'](arg1, arg2, arg3, arg4);
 }
 
 export function SetSilentFromFlag(arg1) {

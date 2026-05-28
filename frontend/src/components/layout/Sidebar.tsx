@@ -8,6 +8,7 @@ import {
   Heart,
   LayoutDashboard,
   MessageSquare,
+  Plus,
   Settings as SettingsIcon,
   Shield,
   User,
@@ -49,20 +50,16 @@ export default function Sidebar() {
     [status],
   );
 
-  const activeSummary = useMemo(() => {
-    const key = String(activeKey?.key_short || "").trim();
-    if (!key) return "等待活跃 Key";
-    return key;
-  }, [activeKey]);
-
-  const activeAccountLabel = useMemo(() => {
-    const k = activeKey;
-    if (!k) return "";
-    const nick = String(k.nickname || "").trim();
-    const email = String(k.email || "").trim();
-    if (nick && email) return `${nick} (${email})`;
-    return email || nick || "";
-  }, [activeKey]);
+  // 0.2: 合并 activeSummary + activeAccountLabel 为一个完整展示：
+  // 主行优先 nickname > email > key_short。双信息时（nickname 与 email 均有）附副行。
+  // hash 仅在 hover title 里出现，调试用。
+  const activeKeyShort = String(activeKey?.key_short || "").trim();
+  const activeNickname = String(activeKey?.nickname || "").trim();
+  const activeEmail = String(activeKey?.email || "").trim();
+  const activePrimary = activeNickname || activeEmail || activeKeyShort;
+  const activeSecondary =
+    activeNickname && activeEmail ? activeEmail : "";
+  const activeSummary = activePrimary || "等待活跃 Key";
 
   const boundSessions = useMemo(() => {
     const sessions = status?.active_sessions ?? [];
@@ -134,24 +131,28 @@ export default function Sidebar() {
           </span>
         </div>
 
-        <div className="mt-3 rounded-[14px] bg-black/[0.03] px-3 py-2 text-[11px] font-medium text-ios-textSecondary dark:bg-white/[0.05] dark:text-ios-textSecondaryDark">
-          当前活跃 Key
-          <div
-            className="mt-1 truncate text-[12px] font-semibold text-ios-text dark:text-ios-textDark"
-            title={activeSummary}
-          >
-            {activeSummary}
-          </div>
-        </div>
-
-        {activeAccountLabel ? (
-          <div className="mt-2 flex items-center gap-1.5 rounded-[14px] bg-ios-blue/[0.06] px-3 py-2 text-[11px] font-medium text-ios-blue">
-            <User className="h-3.5 w-3.5 shrink-0" strokeWidth={2.4} />
-            <span className="truncate" title={activeAccountLabel}>
-              {activeAccountLabel}
+        <div
+          className="mt-3 rounded-[14px] bg-black/[0.03] px-3 py-2 text-[11px] font-medium text-ios-textSecondary dark:bg-white/[0.05] dark:text-ios-textSecondaryDark"
+          title={activeKeyShort || activeSummary}
+        >
+          当前活跃账号
+          <div className="mt-1 flex items-center gap-1.5">
+            {activePrimary && activePrimary !== "等待活跃 Key" ? (
+              <User className="h-3 w-3 shrink-0 text-ios-blue" strokeWidth={2.4} />
+            ) : null}
+            <span className="truncate text-[12px] font-semibold text-ios-text dark:text-ios-textDark">
+              {activeSummary}
             </span>
           </div>
-        ) : null}
+          {activeSecondary ? (
+            <div
+              className="mt-0.5 truncate text-[10px] font-medium opacity-80"
+              title={activeSecondary}
+            >
+              {activeSecondary}
+            </div>
+          ) : null}
+        </div>
 
         {boundSessions.length > 0 ? (
           <div className="mt-2 rounded-[14px] bg-black/[0.02] px-3 py-2 dark:bg-white/[0.03]">
@@ -160,31 +161,54 @@ export default function Sidebar() {
               绑定对话 ({boundSessions.length})
             </div>
             <ul className="space-y-1">
-              {boundSessions.map((session) => (
-                <li
-                  key={session.conv_id_short}
-                  className="flex items-center gap-1.5 text-[10px] text-ios-text dark:text-ios-textDark"
-                >
-                  <Hash className="h-3 w-3 shrink-0 opacity-40" strokeWidth={2} />
-                  <span
-                    className="truncate font-mono"
-                    title={session.conv_id_short}
+              {boundSessions.map((session) => {
+                // 0.3: 优先 title（对话名），fallback 到 conv_id_short hash。
+                const title = String(session.title || "").trim();
+                const display = title || session.conv_id_short;
+                const isHash = !title;
+                return (
+                  <li
+                    key={session.conv_id_short}
+                    className="flex items-center gap-1.5 text-[10px] text-ios-text dark:text-ios-textDark"
                   >
-                    {session.conv_id_short}
-                  </span>
-                  <span className="ml-auto shrink-0 text-[9px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
-                    {session.request_count}次
-                  </span>
-                </li>
-              ))}
+                    <Hash className="h-3 w-3 shrink-0 opacity-40" strokeWidth={2} />
+                    <span
+                      className={`truncate ${isHash ? "font-mono" : ""}`}
+                      title={
+                        title
+                          ? `${title}　·　${session.conv_id_short}`
+                          : session.conv_id_short
+                      }
+                    >
+                      {display}
+                    </span>
+                    <span className="ml-auto shrink-0 text-[9px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+                      {session.request_count}次
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ) : null}
 
-        <div className="mt-3 flex items-center gap-2 rounded-[14px] border border-emerald-500/12 bg-emerald-500/[0.06] px-3 py-2 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
-          <Shield className="h-3.5 w-3.5 shrink-0" strokeWidth={2.4} />
-          健康 {healthyCount} / {totalCount}
-        </div>
+        {/* 1.6: 空号池 → 醒目 CTA；非空 → 健康统计 */}
+        {accounts.length === 0 ? (
+          <button
+            type="button"
+            className="no-drag-region mt-3 flex w-full items-center justify-center gap-1.5 rounded-[14px] bg-gradient-to-b from-[#3b82f6] to-ios-blue px-3 py-2 text-[12px] font-bold text-white shadow-md shadow-ios-blue/25 ring-1 ring-black/5 ring-inset transition-transform ios-btn hover:-translate-y-px"
+            onClick={() => useMainViewStore.getState().openImportModal()}
+            title="粘贴 API Key / JWT / 邮箱密码批量导入"
+          >
+            <Plus className="h-3.5 w-3.5" strokeWidth={2.6} />
+            立即导入第一个账号
+          </button>
+        ) : (
+          <div className="mt-3 flex items-center gap-2 rounded-[14px] border border-emerald-500/12 bg-emerald-500/[0.06] px-3 py-2 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+            <Shield className="h-3.5 w-3.5 shrink-0" strokeWidth={2.4} />
+            健康 {healthyCount} / {totalCount}
+          </div>
+        )}
       </div>
 
       <div className="mx-3 mt-3 flex gap-2">

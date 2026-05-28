@@ -94,7 +94,7 @@ export default function About() {
           </p>
           <button
             type="button"
-            className="no-drag-region group relative w-full max-w-[200px] rounded-ios-block overflow-hidden bg-white shadow-md ring-1 ring-black/[0.05] transition-all ios-btn hover:shadow-lg"
+            className="no-drag-region group relative w-full max-w-[200px] rounded-ios-block overflow-hidden bg-white dark:bg-white/[0.06] shadow-md ring-1 ring-black/[0.05] dark:ring-white/[0.08] transition-all ios-btn hover:shadow-lg"
             onClick={() => openLightbox(authorWechatImg, "作者微信 — Seven")}
           >
             <img
@@ -128,7 +128,7 @@ export default function About() {
           </p>
           <button
             type="button"
-            className="no-drag-region group relative w-full max-w-[200px] rounded-ios-block overflow-hidden bg-white shadow-md ring-1 ring-black/[0.05] transition-all ios-btn hover:shadow-lg"
+            className="no-drag-region group relative w-full max-w-[200px] rounded-ios-block overflow-hidden bg-white dark:bg-white/[0.06] shadow-md ring-1 ring-black/[0.05] dark:ring-white/[0.08] transition-all ios-btn hover:shadow-lg"
             onClick={() => openLightbox(sponsorQrImg, "赞赏码 — 给 Seven 赞赏")}
           >
             <img
@@ -162,7 +162,7 @@ export default function About() {
           </p>
           <button
             type="button"
-            className="no-drag-region group relative w-full max-w-[200px] rounded-ios-block overflow-hidden bg-white shadow-md ring-1 ring-black/[0.05] transition-all ios-btn hover:shadow-lg"
+            className="no-drag-region group relative w-full max-w-[200px] rounded-ios-block overflow-hidden bg-white dark:bg-white/[0.06] shadow-md ring-1 ring-black/[0.05] dark:ring-white/[0.08] transition-all ios-btn hover:shadow-lg"
             onClick={() => openLightbox(currentGroupImg, `微信群 ${groupIndex + 1}`)}
           >
             <img

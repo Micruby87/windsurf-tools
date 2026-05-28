@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type ComponentType } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   ClipboardCopy,
+  FileUp,
   KeyRound,
   Loader2,
   Mail,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import { APIInfo } from "../../api/wails";
 import { useAccountStore } from "../../stores/useAccountStore";
+import { useTaskStore } from "../../stores/useTaskStore";
 import {
   groupImportLines,
   summarizeGrouped,
@@ -114,6 +116,10 @@ export default function ImportModal({ isOpen, onClose }: Props) {
   const [expandedFailures, setExpandedFailures] = useState<Set<number>>(
     new Set(),
   );
+  // 1.3: 拖拽上传状态。dragDepth 跟踪嵌套 dragenter/leave 计数，避免子元素 leave 误关。
+  const [dragDepth, setDragDepth] = useState(0);
+  const isDragging = dragDepth > 0;
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // 关闭模态时清空，避免下次打开看到上次残留
   useEffect(() => {
@@ -122,8 +128,86 @@ export default function ImportModal({ isOpen, onClose }: Props) {
       setResults([]);
       setExpandedFailures(new Set());
       setIsLoading(false);
+      setDragDepth(0);
     }
   }, [isOpen]);
+
+  // 1.3: 读取文件文本（默认 UTF-8）并追加到 textarea。
+  const readAndAppendFiles = async (files: FileList | File[]) => {
+    const list = Array.from(files);
+    if (list.length === 0) return;
+    const SUPPORTED = /\.(txt|json|csv|md|log|jsonl|env)$/i;
+    const ALLOWED_MIME =
+      /^(text\/|application\/(json|x-ndjson|x-yaml|csv))/i;
+    const accepted: File[] = [];
+    const rejected: string[] = [];
+    for (const f of list) {
+      if (SUPPORTED.test(f.name) || ALLOWED_MIME.test(f.type) || f.type === "") {
+        accepted.push(f);
+      } else {
+        rejected.push(f.name);
+      }
+    }
+    if (rejected.length > 0) {
+      showToast(
+        `已忽略 ${rejected.length} 个不支持的文件: ${rejected.slice(0, 2).join(", ")}${
+          rejected.length > 2 ? "…" : ""
+        }`,
+        "warning",
+      );
+    }
+    if (accepted.length === 0) return;
+    try {
+      const texts = await Promise.all(accepted.map((f) => f.text()));
+      const joined = texts.join("\n").trim();
+      if (!joined) {
+        showToast("拖入的文件为空", "warning");
+        return;
+      }
+      setInputText((prev) => {
+        const sep = prev.trim() ? "\n" : "";
+        return prev + sep + joined;
+      });
+      const lines = joined.split("\n").filter((l) => l.trim()).length;
+      showToast(
+        `已读入 ${accepted.length} 个文件 · ${lines} 行候选`,
+        "success",
+      );
+    } catch (e) {
+      showErrorToast(e, "读取文件失败");
+    }
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.types.includes("Files")) {
+      setDragDepth((d) => d + 1);
+    }
+  };
+  const handleDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes("Files")) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    }
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragDepth((d) => Math.max(0, d - 1));
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragDepth(0);
+    if (e.dataTransfer.files.length > 0) {
+      void readAndAppendFiles(e.dataTransfer.files);
+    }
+  };
+  const handlePickFile = () => fileInputRef.current?.click();
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      void readAndAppendFiles(e.target.files);
+      e.target.value = ""; // 允许同名文件再次选
+    }
+  };
 
   const detectionSummary: DetectionSummary = useMemo(() => {
     const lines = inputText
@@ -192,9 +276,17 @@ export default function ImportModal({ isOpen, onClose }: Props) {
     if (!lines.length) return;
     setIsLoading(true);
     setResults([]);
+    // F1: 注册本地任务，自动打开 Drawer 让用户看进度
+    const taskID = useTaskStore.getState().startLocal({
+      kind: "import",
+      title: `批量导入 (${lines.length})`,
+      total: lines.length,
+    });
+    useTaskStore.getState().setOpen(true);
     try {
       const grouped = groupImportLines(lines);
       let allResults: main.ImportResult[] = [];
+      let lastReportedCount = 0;
 
       const runBatch = async (
         items: any[],
@@ -203,9 +295,33 @@ export default function ImportModal({ isOpen, onClose }: Props) {
         if (!items.length) return;
         const batch = await importBatched(items, fn, (acc) => {
           setResults([...allResults, ...acc]);
+          // 增量推送到 task store
+          const merged = [...allResults, ...acc];
+          while (lastReportedCount < merged.length) {
+            const r = merged[lastReportedCount];
+            useTaskStore.getState().updateLocal(taskID, {
+              addItem: {
+                name: r.email || `第 ${lastReportedCount + 1} 条`,
+                status: r.success ? "ok" : "failed",
+                detail: r.error || (r.success ? "导入成功" : ""),
+              },
+            });
+            lastReportedCount++;
+          }
         });
         allResults = [...allResults, ...(batch || [])];
         setResults([...allResults]);
+        while (lastReportedCount < allResults.length) {
+          const r = allResults[lastReportedCount];
+          useTaskStore.getState().updateLocal(taskID, {
+            addItem: {
+              name: r.email || `第 ${lastReportedCount + 1} 条`,
+              status: r.success ? "ok" : "failed",
+              detail: r.error || (r.success ? "导入成功" : ""),
+            },
+          });
+          lastReportedCount++;
+        }
       };
 
       await runBatch(grouped.apiKeys, (slice) => APIInfo.importByAPIKey(slice));
@@ -236,6 +352,7 @@ export default function ImportModal({ isOpen, onClose }: Props) {
       showErrorToast(e, "导入失败");
     } finally {
       setIsLoading(false);
+      useTaskStore.getState().finishLocal(taskID);
     }
   };
 
@@ -339,14 +456,62 @@ export default function ImportModal({ isOpen, onClose }: Props) {
                 支持混合粘贴 — API Key、JWT、邮箱密码、邮箱----Token、Refresh Token 可一起粘贴，自动分流导入。
               </div>
             </div>
-            <textarea
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              className="no-drag-region w-full h-[180px] bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(246,249,252,0.9))] dark:bg-[linear-gradient(180deg,rgba(10,10,12,0.75),rgba(18,18,20,0.88))] border border-black/10 dark:border-white/10 p-4 rounded-[18px] focus:outline-none focus:ring-2 focus:ring-ios-blue/50 dark:focus:ring-ios-blue/30 resize-none font-mono text-[13px] shadow-inner transition-all"
-              placeholder={
-                "粘贴任意格式的凭证…\n或点击上方示例 chip 试试看\n\nsk-ws-01-xxxx\neyJhbGciOi...\nuser@mail.com password123\nuser@mail.com----devin-session-token$eyJ...\nAMf-vBx..."
-              }
-            />
+
+            {/* 1.3: drop zone wrapper — 整个区域接 drag/drop，drop 时读文件追加到 textarea */}
+            <div
+              className="relative"
+              onDragEnter={handleDragEnter}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <textarea
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                className={[
+                  "no-drag-region w-full h-[180px] bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(246,249,252,0.9))] dark:bg-[linear-gradient(180deg,rgba(10,10,12,0.75),rgba(18,18,20,0.88))] border p-4 rounded-[18px] focus:outline-none focus:ring-2 focus:ring-ios-blue/50 dark:focus:ring-ios-blue/30 resize-none font-mono text-[13px] shadow-inner transition-all",
+                  isDragging
+                    ? "border-ios-blue/70 ring-2 ring-ios-blue/30"
+                    : "border-black/10 dark:border-white/10",
+                ].join(" ")}
+                placeholder={
+                  "粘贴任意格式的凭证…\n或点击上方示例 chip 试试看\n或拖拽 .txt / .json 文件到这里\n\nsk-ws-01-xxxx\neyJhbGciOi...\nuser@mail.com password123\nuser@mail.com----devin-session-token$eyJ...\nAMf-vBx..."
+                }
+              />
+              {isDragging ? (
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center rounded-[18px] bg-ios-blue/[0.10] dark:bg-ios-blue/[0.18] border-2 border-dashed border-ios-blue/60 backdrop-blur-[1px]">
+                  <FileUp
+                    className="h-8 w-8 text-ios-blue mb-2"
+                    strokeWidth={2.4}
+                  />
+                  <div className="text-[13px] font-bold text-ios-blue">
+                    松手导入文件
+                  </div>
+                  <div className="mt-1 text-[10px] font-medium text-ios-blue/80">
+                    支持 .txt / .json / .csv / .md / .log / .jsonl
+                  </div>
+                </div>
+              ) : null}
+
+              {/* 隐藏的 file input + 「选择文件」小按钮 */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".txt,.json,.csv,.md,.log,.jsonl,.env,text/plain,application/json"
+                className="hidden"
+                onChange={handleFileInputChange}
+              />
+              <button
+                type="button"
+                onClick={handlePickFile}
+                className="no-drag-region absolute bottom-3 right-3 inline-flex items-center gap-1 rounded-full border border-black/[0.08] bg-white/85 px-3 py-1 text-[10px] font-bold text-ios-text shadow-sm backdrop-blur-sm transition-colors hover:bg-white dark:border-white/[0.1] dark:bg-white/[0.08] dark:text-ios-textDark dark:hover:bg-white/[0.14]"
+                title="选择本地凭证文件追加到上方"
+              >
+                <FileUp className="h-3 w-3" strokeWidth={2.6} />
+                选择文件
+              </button>
+            </div>
           </div>
 
           {results.length > 0 ? (

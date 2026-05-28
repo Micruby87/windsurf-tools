@@ -3,6 +3,8 @@ import {
   AlertTriangle,
   ArrowRightLeft,
   CheckCircle,
+  Download,
+  Search,
   KeyRound,
   Link2,
   Loader2,
@@ -21,6 +23,7 @@ import { APIInfo } from "../api/wails";
 import { useMitmStatusStore } from "../stores/useMitmStatusStore";
 import { confirmDialog, showToast } from "../utils/toast";
 import { formatDateTimeAsiaShanghai } from "../utils/datetimeAsia";
+import { usePersistentMitmEvents } from "../hooks/usePersistentMitmEvents";
 
 type PrereqStepResult = {
   step: string;
@@ -86,11 +89,74 @@ export default function MitmPanel() {
     return m;
   }, [prereqResults]);
 
-  const recentEvents: RecentMitmEvent[] = useMemo(() => {
+  // 3.4: 后端只返回最近 5-8 条事件 + 进程重启即丢。这里把每次拉到的事件合并到
+  // localStorage（最多 200 条），按 (at, message, tone) 去重，让用户能看完整历史。
+  const rawRecentEvents: RecentMitmEvent[] = useMemo(() => {
     const raw = (status as unknown as { recent_events?: RecentMitmEvent[] } | null)
       ?.recent_events;
-    return Array.isArray(raw) ? raw.slice(0, 8) : [];
+    return Array.isArray(raw) ? raw : [];
   }, [status]);
+  const { events: persistedEvents, clear: clearPersistedEvents } =
+    usePersistentMitmEvents(rawRecentEvents);
+  const [eventToneFilter, setEventToneFilter] = useState<
+    "all" | "success" | "info" | "warning" | "error"
+  >("all");
+  // 3.1: 实时日志搜索
+  const [eventSearchQuery, setEventSearchQuery] = useState("");
+  // 倒序展示（最新在上），按 tone + 文本过滤
+  const recentEvents = useMemo(() => {
+    let list = [...persistedEvents].reverse();
+    if (eventToneFilter !== "all") {
+      list = list.filter((e) => (e.tone || "info") === eventToneFilter);
+    }
+    const q = eventSearchQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter((e) =>
+        (e.message || "").toLowerCase().includes(q) ||
+        (e.tone || "").toLowerCase().includes(q),
+      );
+    }
+    return list;
+  }, [persistedEvents, eventToneFilter, eventSearchQuery]);
+
+  // 3.1: 导出全部 events 为 .txt（按时间正序，每行一条）
+  const handleExportEvents = () => {
+    const lines = persistedEvents.map((e) => {
+      const ts = e.at ? formatDateTimeAsiaShanghai(e.at) : "(no-ts)";
+      const tone = (e.tone || "info").toUpperCase();
+      const msg = (e.message || "").replace(/\n/g, " ");
+      return `[${ts}] [${tone}] ${msg}`;
+    });
+    const text = lines.join("\n") + "\n";
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const stamp = new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")
+      .slice(0, 19);
+    a.href = url;
+    a.download = `mitm-events-${stamp}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`已导出 ${persistedEvents.length} 条事件到 ${a.download}`, "success");
+  };
+  const eventToneCounts = useMemo(() => {
+    const c: Record<string, number> = {
+      all: persistedEvents.length,
+      success: 0,
+      info: 0,
+      warning: 0,
+      error: 0,
+    };
+    for (const e of persistedEvents) {
+      const t = e.tone || "info";
+      if (t in c) c[t]++;
+    }
+    return c;
+  }, [persistedEvents]);
 
   const lastProxyIssue = useMemo(() => {
     const rawKind = String(status?.last_error_kind || "").trim();
@@ -118,14 +184,19 @@ export default function MitmPanel() {
     }
   })();
 
+  const activeKeyLabel =
+    activeKey?.nickname ||
+    activeKey?.email ||
+    activeKey?.key_short ||
+    "";
   const statusTone = status?.running
     ? {
         chip: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300",
         panel: "border-emerald-500/15 bg-emerald-500/[0.07]",
         dot: "bg-emerald-500",
         label: "代理运行中",
-        detail: activeKey?.key_short
-          ? `当前活跃 ${activeKey.key_short}`
+        detail: activeKeyLabel
+          ? `当前活跃 ${activeKeyLabel}`
           : "流量已接入本机 MITM",
       }
     : {
@@ -414,27 +485,103 @@ export default function MitmPanel() {
           </div>
         ) : null}
 
-        {recentEvents.length > 0 ? (
+        {persistedEvents.length > 0 ? (
           <div className="rounded-[22px] border border-black/[0.05] bg-white/70 p-4 shadow-sm dark:border-white/[0.06] dark:bg-white/[0.04]">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-black/[0.04] text-ios-textSecondary dark:bg-white/[0.06] dark:text-ios-textSecondaryDark">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-black/[0.04] text-ios-textSecondary dark:text-ios-textSecondaryDark dark:bg-white/[0.06] ">
                   <Sparkles className="h-4 w-4" strokeWidth={2.4} />
                 </div>
                 <div>
                   <div className="text-[13px] font-bold text-ios-text dark:text-ios-textDark">
-                    最近代理事件
+                    实时事件日志
                   </div>
                   <div className="text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
-                    便于确认 JWT 预热、轮转和上游错误是否真的发生。
+                    本地保留最近 200 条 · 搜索 / 筛选 / 导出 · 进程重启不丢
                   </div>
                 </div>
               </div>
-              <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-ios-textSecondary dark:bg-white/[0.06] dark:text-ios-textSecondaryDark">
-                {recentEvents.length} 条
-              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  className="no-drag-region inline-flex items-center gap-1 rounded-full bg-ios-blue/10 px-2.5 py-1 text-[10px] font-bold text-ios-blue transition-colors hover:bg-ios-blue/15"
+                  onClick={handleExportEvents}
+                  title="导出全部事件为 .txt 文件"
+                >
+                  <Download className="h-3 w-3" strokeWidth={2.6} />
+                  导出
+                </button>
+                <button
+                  type="button"
+                  className="no-drag-region rounded-full px-2.5 py-1 text-[10px] font-bold text-rose-600 hover:bg-rose-500/10 transition-colors dark:text-rose-300"
+                  onClick={clearPersistedEvents}
+                  title="清空所有事件历史"
+                >
+                  清空
+                </button>
+              </div>
             </div>
+
+            {/* 3.1: 搜索框 */}
+            <div className="mb-2 relative">
+              <Search
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-ios-textSecondary dark:text-ios-textSecondaryDark"
+                strokeWidth={2.6}
+              />
+              <input
+                type="search"
+                value={eventSearchQuery}
+                onChange={(e) => setEventSearchQuery(e.target.value)}
+                placeholder="搜索事件文本…"
+                className="no-drag-region w-full rounded-[10px] border border-black/[0.06] bg-white/70 dark:border-white/[0.08] dark:bg-white/[0.05] pl-7 pr-2.5 py-1.5 text-[11.5px] text-ios-text dark:text-ios-textDark focus:outline-none focus:ring-2 focus:ring-ios-blue/30"
+              />
+            </div>
+
+            {/* 3.4: tone 筛选 chips */}
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {(
+                [
+                  { key: "all", label: "全部", color: "bg-ios-blue/10 text-ios-blue" },
+                  { key: "success", label: "成功", color: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
+                  { key: "info", label: "信息", color: "bg-sky-500/10 text-sky-700 dark:text-sky-300" },
+                  { key: "warning", label: "警告", color: "bg-amber-500/10 text-amber-700 dark:text-amber-300" },
+                  { key: "error", label: "错误", color: "bg-rose-500/10 text-rose-700 dark:text-rose-300" },
+                ] as const
+              ).map((c) => {
+                const active = eventToneFilter === c.key;
+                const count = eventToneCounts[c.key] ?? 0;
+                return (
+                  <button
+                    key={c.key}
+                    type="button"
+                    className={[
+                      "no-drag-region inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold transition-all",
+                      active
+                        ? c.color + " ring-2 ring-ios-blue/40"
+                        : "bg-black/[0.04] text-ios-textSecondary dark:text-ios-textSecondaryDark hover:bg-black/[0.06] dark:bg-white/[0.06] dark:hover:bg-white/[0.08]",
+                    ].join(" ")}
+                    onClick={() => setEventToneFilter(c.key)}
+                  >
+                    {c.label}
+                    <span
+                      className={[
+                        "rounded-full px-1 text-[9px] tabular-nums",
+                        active ? "bg-white/40 dark:bg-black/30" : "opacity-60",
+                      ].join(" ")}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
             <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+              {recentEvents.length === 0 ? (
+                <div className="px-3 py-4 text-center text-[11px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+                  当前 tone 没有事件
+                </div>
+              ) : null}
               {recentEvents.map((event, index) => (
                 <div
                   key={`${event.at || "mitm"}-${index}`}
@@ -472,7 +619,7 @@ export default function MitmPanel() {
         <div className="space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-black/[0.04] text-ios-textSecondary dark:bg-white/[0.06] dark:text-ios-textSecondaryDark">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-black/[0.04] text-ios-textSecondary dark:text-ios-textSecondaryDark dark:bg-white/[0.06] ">
                 <Wrench className="h-4 w-4" strokeWidth={2.4} />
               </div>
               <div>
@@ -513,6 +660,7 @@ export default function MitmPanel() {
               return (
                 <div
                   key={item.key}
+                  data-health-anchor={`mitm-${item.key}`}
                   className={`rounded-[18px] border px-4 py-3 shadow-sm transition-all ${
                     item.ready
                       ? "border-emerald-500/15 bg-emerald-500/[0.06]"
@@ -588,7 +736,7 @@ export default function MitmPanel() {
                   </div>
                 </div>
               </div>
-              <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-ios-textSecondary dark:bg-white/[0.06] dark:text-ios-textSecondaryDark">
+              <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-ios-textSecondary dark:text-ios-textSecondaryDark dark:bg-white/[0.06] ">
                 {poolCount} keys · 健康 {healthyKeys}
                 {runtimeExhaustedKeys > 0 ? ` · 见底 ${runtimeExhaustedKeys}` : ""}
               </span>
@@ -617,9 +765,20 @@ export default function MitmPanel() {
                   >
                     <div className="flex min-w-0 items-center gap-2.5">
                       <span className={`h-2 w-2 rounded-full shrink-0 ${dot}`} />
-                      <span className="truncate text-ios-text dark:text-ios-textDark">
-                        {k.key_short}
+                      <span
+                        className="truncate text-ios-text dark:text-ios-textDark"
+                        title={k.key_short}
+                      >
+                        {k.nickname || k.email || k.key_short}
                       </span>
+                      {(k.nickname || k.email) && k.key_short ? (
+                        <span
+                          className="hidden md:inline shrink-0 text-[10px] font-mono opacity-50"
+                          title="API Key 短哈希"
+                        >
+                          {k.key_short}
+                        </span>
+                      ) : null}
                       {k.is_current ? (
                         <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
                           ACTIVE
@@ -673,7 +832,7 @@ export default function MitmPanel() {
             </div>
           </div>
         ) : status ? (
-          <div className="rounded-[20px] border border-dashed border-black/[0.08] bg-black/[0.02] px-4 py-5 text-[13px] text-ios-textSecondary dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-ios-textSecondaryDark">
+          <div className="rounded-[20px] border border-dashed border-black/[0.08] bg-black/[0.02] px-4 py-5 text-[13px] text-ios-textSecondary dark:text-ios-textSecondaryDark dark:border-white/[0.08] dark:bg-white/[0.03] ">
             <div className="flex items-start gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-black/[0.04] dark:bg-white/[0.06]">
                 <Sparkles

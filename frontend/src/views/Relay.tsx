@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Copy,
+  Eye,
+  EyeOff,
   Globe,
   Info,
   Play,
@@ -35,6 +37,13 @@ export default function Relay() {
   const [relayLoading, setRelayLoading] = useState(false);
   const [testResult, setTestResult] = useState("");
   const [testLoading, setTestLoading] = useState(false);
+  // 4.5: secret 默认遮蔽，点眼睛切换。
+  const [secretVisible, setSecretVisible] = useState(false);
+  const maskSecret = (s: string) => {
+    if (!s) return "";
+    if (s.length <= 8) return "•".repeat(s.length);
+    return `${s.slice(0, 3)}${"•".repeat(Math.min(s.length - 6, 24))}${s.slice(-3)}`;
+  };
 
   useEffect(() => {
     void useRelayStatusStore.getState().ensureStatusLoaded();
@@ -242,7 +251,7 @@ for chunk in stream:
                     </div>
                     <button
                       type="button"
-                      className="no-drag-region flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-black/[0.06] bg-white/80 text-ios-textSecondary shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05]"
+                      className="no-drag-region flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-black/[0.06] bg-white/80 text-ios-textSecondary dark:text-ios-textSecondaryDark shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05]"
                       title="复制 Base URL"
                       onClick={() => copyText(`${relayURL}/v1`, "Base URL")}
                     >
@@ -262,7 +271,7 @@ for chunk in stream:
                     </div>
                     <button
                       type="button"
-                      className="no-drag-region flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-black/[0.06] bg-white/80 text-ios-textSecondary shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05]"
+                      className="no-drag-region flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-black/[0.06] bg-white/80 text-ios-textSecondary dark:text-ios-textSecondaryDark shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05]"
                       title="复制 Endpoint"
                       onClick={() => copyText(endpoint, "Endpoint")}
                     >
@@ -270,20 +279,36 @@ for chunk in stream:
                     </button>
                   </div>
 
-                  {/* API Key */}
+                  {/* API Key — 4.5: 默认遮蔽 */}
                   {relaySecret ? (
                     <div className="flex items-center gap-2">
                       <div className="flex-1 min-w-0 rounded-[14px] border border-black/[0.05] bg-black/[0.02] px-3 py-2.5 dark:border-white/[0.06] dark:bg-white/[0.03]">
                         <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-ios-textSecondary dark:text-ios-textSecondaryDark">
                           API Key (Bearer)
                         </div>
-                        <div className="mt-0.5 font-mono text-[12px] text-ios-text dark:text-ios-textDark select-all break-all">
-                          {relaySecret}
+                        <div
+                          className="mt-0.5 font-mono text-[12px] text-ios-text dark:text-ios-textDark select-all break-all"
+                          title={secretVisible ? relaySecret : "已遮蔽，点眼睛显示"}
+                        >
+                          {secretVisible ? relaySecret : maskSecret(relaySecret)}
                         </div>
                       </div>
                       <button
                         type="button"
-                        className="no-drag-region flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-black/[0.06] bg-white/80 text-ios-textSecondary shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05]"
+                        className="no-drag-region flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-black/[0.06] bg-white/80 text-ios-textSecondary dark:text-ios-textSecondaryDark shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05]"
+                        title={secretVisible ? "隐藏 API Key" : "显示 API Key 明文"}
+                        aria-label={secretVisible ? "隐藏 API Key" : "显示 API Key 明文"}
+                        onClick={() => setSecretVisible((v) => !v)}
+                      >
+                        {secretVisible ? (
+                          <EyeOff className="h-3.5 w-3.5" strokeWidth={2.4} />
+                        ) : (
+                          <Eye className="h-3.5 w-3.5" strokeWidth={2.4} />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="no-drag-region flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-black/[0.06] bg-white/80 text-ios-textSecondary dark:text-ios-textSecondaryDark shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05]"
                         title="复制 API Key"
                         onClick={() => copyText(relaySecret, "API Key")}
                       >
@@ -312,7 +337,7 @@ for chunk in stream:
                         (m) => (
                           <span
                             key={m}
-                            className="rounded-full bg-black/[0.04] px-2 py-0.5 text-[10px] font-bold tracking-wide text-ios-textSecondary dark:bg-white/[0.06] dark:text-ios-textSecondaryDark"
+                            className="rounded-full bg-black/[0.04] px-2 py-0.5 text-[10px] font-bold tracking-wide text-ios-textSecondary dark:text-ios-textSecondaryDark dark:bg-white/[0.06] "
                           >
                             {m}
                           </span>
@@ -374,7 +399,7 @@ for chunk in stream:
                 <div className="mt-3 space-y-2">
                   <button
                     type="button"
-                    className="no-drag-region flex w-full items-center justify-center gap-2 rounded-[14px] border border-black/[0.06] bg-white/80 px-3 py-2.5 text-[11px] font-semibold text-ios-textSecondary shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-ios-textSecondaryDark"
+                    className="no-drag-region flex w-full items-center justify-center gap-2 rounded-[14px] border border-black/[0.06] bg-white/80 px-3 py-2.5 text-[11px] font-semibold text-ios-textSecondary dark:text-ios-textSecondaryDark shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] "
                     onClick={() => copyText(curlCmd, "curl 命令")}
                   >
                     <Copy className="h-3 w-3" strokeWidth={2.4} />
@@ -382,7 +407,7 @@ for chunk in stream:
                   </button>
                   <button
                     type="button"
-                    className="no-drag-region flex w-full items-center justify-center gap-2 rounded-[14px] border border-black/[0.06] bg-white/80 px-3 py-2.5 text-[11px] font-semibold text-ios-textSecondary shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-ios-textSecondaryDark"
+                    className="no-drag-region flex w-full items-center justify-center gap-2 rounded-[14px] border border-black/[0.06] bg-white/80 px-3 py-2.5 text-[11px] font-semibold text-ios-textSecondary dark:text-ios-textSecondaryDark shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] "
                     onClick={() => copyText(pythonExample, "Python 示例")}
                   >
                     <Copy className="h-3 w-3" strokeWidth={2.4} />

@@ -40,6 +40,26 @@ export default function IToast() {
           >
             <Icon className="h-[18px] w-[18px] shrink-0 mt-0.5" strokeWidth={2.4} />
             <span className="flex-1 leading-relaxed">{t.message}</span>
+            {t.action ? (
+              <button
+                type="button"
+                className={[
+                  "no-drag-region shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors",
+                  t.action.destructive
+                    ? "border-rose-500/40 bg-rose-500/10 text-rose-700 hover:bg-rose-500/20 dark:text-rose-300"
+                    : "border-current/30 bg-white/15 hover:bg-white/30",
+                ].join(" ")}
+                onClick={() => {
+                  try {
+                    t.action?.onClick();
+                  } finally {
+                    dismissToast(t.id);
+                  }
+                }}
+              >
+                {t.action.label}
+              </button>
+            ) : null}
             <button
               type="button"
               className="no-drag-region opacity-60 hover:opacity-100 transition-opacity"

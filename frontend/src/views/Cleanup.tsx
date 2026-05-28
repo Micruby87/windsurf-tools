@@ -10,6 +10,7 @@ import {
   Zap,
 } from "lucide-react";
 import { APIInfo } from "../api/wails";
+import { useTaskStore } from "../stores/useTaskStore";
 import { confirmDialog, showErrorToast, showToast } from "../utils/toast";
 
 interface CleanupCategory {
@@ -152,9 +153,27 @@ export default function Cleanup() {
       if (!ok) return;
     }
     setCleaning(true);
+    // F1: 注册任务跟踪
+    const taskID = useTaskStore.getState().startLocal({
+      kind: "cleanup",
+      title: `清理 ${ids.length} 个类别`,
+      total: ids.length,
+    });
     try {
       const results = (await APIInfo.cleanupWindsurf(ids)) as CleanupResult[];
       setLastCleanResults(results);
+      // 把每个 category 的结果推到 task store
+      for (const r of results) {
+        useTaskStore.getState().updateLocal(taskID, {
+          addItem: {
+            name: r.category,
+            status: r.success ? "ok" : "failed",
+            detail: r.success
+              ? `释放 ${humanSize(r.freed_bytes)}`
+              : r.error || "清理失败",
+          },
+        });
+      }
       const totalFreed = results.reduce((s, r) => s + r.freed_bytes, 0);
       showToast(`清理完成，释放 ${humanSize(totalFreed)}`, "success");
       setSelectedCategories(new Set());
@@ -163,6 +182,7 @@ export default function Cleanup() {
       showErrorToast(e, "清理失败");
     } finally {
       setCleaning(false);
+      useTaskStore.getState().finishLocal(taskID);
     }
   };
 
@@ -205,9 +225,50 @@ export default function Cleanup() {
     }
   };
 
+  // P4: 单条性能修复
+  const [singleFixingId, setSingleFixingId] = useState<string | null>(null);
+  const applySingleFix = async (id: string) => {
+    if (singleFixingId) return;
+    setSingleFixingId(id);
+    try {
+      const results = (await APIInfo.applyPerformanceFix([id])) as Record<
+        string,
+        string
+      >;
+      const status = results[id] ?? "已处理";
+      showToast(`${status}: ${id}`, "success");
+      // 刷新一次 tips（应用后可能某些 tip 消失）
+      void fetchTips();
+    } catch (e) {
+      showErrorToast(e, "单项修复失败");
+    } finally {
+      setSingleFixingId(null);
+    }
+  };
+
+  // P4: Windsurf 进程列表
+  const [processes, setProcesses] = useState<Array<Record<string, unknown>>>(
+    [],
+  );
+  const [loadingProcesses, setLoadingProcesses] = useState(false);
+  const fetchProcesses = async () => {
+    setLoadingProcesses(true);
+    try {
+      const r = (await APIInfo.getWindsurfProcessInfo()) as Array<
+        Record<string, unknown>
+      >;
+      setProcesses(Array.isArray(r) ? r : []);
+    } catch (e) {
+      console.error("getWindsurfProcessInfo error:", e);
+    } finally {
+      setLoadingProcesses(false);
+    }
+  };
+
   useEffect(() => {
     void fetchDiskUsage();
     void fetchTips();
+    void fetchProcesses();
   }, []);
 
   return (
@@ -225,7 +286,7 @@ export default function Cleanup() {
             type="button"
             onClick={fetchDiskUsage}
             disabled={loadingDisk}
-            className="no-drag-region flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-ios-textSecondary hover:bg-black/5 dark:hover:bg-white/10 transition-colors ios-btn"
+            className="no-drag-region flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-ios-textSecondary dark:text-ios-textSecondaryDark hover:bg-black/5 dark:hover:bg-white/10 transition-colors ios-btn"
           >
             <RotateCcw
               className={`w-3.5 h-3.5 ${loadingDisk ? "animate-spin" : ""}`}
@@ -475,9 +536,121 @@ export default function Cleanup() {
                       {tip.description}
                     </div>
                   </div>
+                  {tip.auto_fix ? (
+                    <button
+                      type="button"
+                      className="no-drag-region shrink-0 inline-flex items-center gap-1 rounded-full bg-ios-blue/10 hover:bg-ios-blue/20 text-ios-blue px-3 py-1 text-[11px] font-bold disabled:opacity-50 transition-colors"
+                      onClick={() => void applySingleFix(tip.id)}
+                      disabled={singleFixingId != null}
+                      title="仅修复这一项（不影响其他）"
+                    >
+                      {singleFixingId === tip.id ? (
+                        <Loader2
+                          className="w-3 h-3 animate-spin"
+                          strokeWidth={2.6}
+                        />
+                      ) : (
+                        <Zap className="w-3 h-3" strokeWidth={2.6} />
+                      )}
+                      修复此项
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </section>
+
+      {/* P4: Windsurf 进程列表 */}
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-5 h-5 text-emerald-500" strokeWidth={2.2} />
+            <h2 className="text-lg font-bold text-ios-text dark:text-ios-textDark">
+              Windsurf 进程
+            </h2>
+            <span className="rounded-full bg-black/[0.04] dark:bg-white/[0.06] px-2 py-0.5 text-[11px] font-bold text-ios-textSecondary dark:text-ios-textSecondaryDark">
+              {processes.length}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => void fetchProcesses()}
+            disabled={loadingProcesses}
+            className="no-drag-region flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-ios-textSecondary dark:text-ios-textSecondaryDark hover:bg-black/5 dark:hover:bg-white/10 transition-colors ios-btn"
+          >
+            <RotateCcw
+              className={`w-3.5 h-3.5 ${loadingProcesses ? "animate-spin" : ""}`}
+              strokeWidth={2.2}
+            />
+            刷新
+          </button>
+        </div>
+        {processes.length === 0 ? (
+          <div className="rounded-2xl border border-black/[0.05] bg-white/60 px-4 py-6 dark:border-white/[0.06] dark:bg-white/[0.04] text-center text-[12px] text-ios-textSecondary dark:text-ios-textSecondaryDark">
+            {loadingProcesses ? "正在扫描…" : "未检测到运行中的 Windsurf 进程"}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-black/[0.05] bg-white/60 dark:border-white/[0.06] dark:bg-white/[0.04] overflow-hidden">
+            <table className="w-full text-[11.5px]">
+              <thead className="bg-black/[0.03] dark:bg-white/[0.04]">
+                <tr className="text-left text-ios-textSecondary dark:text-ios-textSecondaryDark">
+                  <th className="px-3 py-2 font-bold">PID</th>
+                  <th className="px-3 py-2 font-bold">名称</th>
+                  <th className="px-3 py-2 font-bold text-right">CPU%</th>
+                  <th className="px-3 py-2 font-bold text-right">内存</th>
+                </tr>
+              </thead>
+              <tbody>
+                {processes.map((p, i) => {
+                  const pidNum = Number(p.pid ?? 0);
+                  const name = String(p.name ?? "—");
+                  // 后端 sentinel：pid=0 + name 含「合计」= 汇总行
+                  const isSummary = pidNum === 0 && name.includes("合计");
+                  const cpu = Number(p.cpu_percent ?? 0);
+                  const memMB =
+                    Number(p.memory_bytes ?? 0) / 1024 / 1024;
+                  return (
+                    <tr
+                      key={`${pidNum}-${i}`}
+                      className={[
+                        "border-t border-black/[0.04] dark:border-white/[0.04]",
+                        isSummary
+                          ? "bg-black/[0.02] dark:bg-white/[0.04] font-extrabold"
+                          : "",
+                      ].join(" ")}
+                    >
+                      <td className="px-3 py-2 font-mono text-ios-text dark:text-ios-textDark">
+                        {isSummary ? "—" : pidNum || "—"}
+                      </td>
+                      <td className="px-3 py-2 truncate text-ios-text dark:text-ios-textDark max-w-[280px]">
+                        {name}
+                      </td>
+                      <td
+                        className={[
+                          "px-3 py-2 text-right tabular-nums",
+                          isSummary
+                            ? "text-ios-textSecondary dark:text-ios-textSecondaryDark"
+                            : cpu > 50
+                            ? "text-rose-500 font-bold"
+                            : cpu > 20
+                            ? "text-amber-500 font-bold"
+                            : "text-ios-text dark:text-ios-textDark font-bold",
+                        ].join(" ")}
+                      >
+                        {isSummary ? "—" : cpu.toFixed(1)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-ios-text dark:text-ios-textDark">
+                        {memMB >= 1024
+                          ? `${(memMB / 1024).toFixed(2)} GB`
+                          : `${memMB.toFixed(0)} MB`}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </section>

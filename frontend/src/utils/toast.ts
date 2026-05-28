@@ -3,10 +3,21 @@ import { friendlyError } from "./errorMessage";
 
 export type ToastKind = "success" | "error" | "info" | "warning";
 
+/** D-D：toast 上的一键操作按钮 —— 错误后引导用户下一步动作，
+ *  如「+加入 Trial」「打开导入弹窗」「刷新额度」。点击后自动关闭 toast。
+ */
+export interface ToastAction {
+  label: string;
+  /** 是否危险操作（删除/移除）—— 用红色加重 */
+  destructive?: boolean;
+  onClick: () => void;
+}
+
 export interface ToastItem {
   id: number;
   message: string;
   kind: ToastKind;
+  action?: ToastAction;
 }
 
 const MAX_TOAST_QUEUE = 6;
@@ -41,13 +52,16 @@ export function useToastQueue(): ToastItem[] {
 
 /** 非阻塞提示；支持 message 内换行（white-space: pre-line）。
  *  内置 1.5s dedup —— 短时间内重复触发同 (kind, message) 不会叠加。
+ *  D-D：action 可选，提供一键操作按钮（如「+加入 Trial」「刷新额度」）。
+ *  带 action 的 toast 自动延长至 7s 默认时长，给用户阅读+点击时间。
  */
 export function showToast(
   message: string,
   kind: ToastKind = "info",
-  durationMs = 4800,
+  durationMs?: number,
+  action?: ToastAction,
 ): void {
-  const dedupKey = `${kind}::${message}`;
+  const dedupKey = `${kind}::${message}::${action?.label ?? ""}`;
   const now = Date.now();
   const last = lastShownAt.get(dedupKey) ?? 0;
   if (now - last < TOAST_DEDUP_MS) {
@@ -63,10 +77,22 @@ export function showToast(
   }
 
   const id = ++toastSeq;
-  useToastStore.getState().push({ id, message, kind });
+  useToastStore.getState().push({ id, message, kind, action });
+  const ttl = durationMs ?? (action ? 7000 : 4800);
   window.setTimeout(() => {
     useToastStore.getState().remove(id);
-  }, durationMs);
+  }, ttl);
+
+  // 3.2: error/warning 同时入持久化通知中心。延迟 import 避免循环依赖。
+  if (kind === "error" || kind === "warning") {
+    import("../stores/useNotificationsStore")
+      .then(({ useNotificationsStore }) =>
+        useNotificationsStore.getState().add(kind, message),
+      )
+      .catch(() => {
+        /* ignore */
+      });
+  }
 }
 
 /** 把任意错误（含 Go rpc error 字符串）翻译成中文短句后弹 error toast。

@@ -4,11 +4,20 @@ import Sidebar from "./components/layout/Sidebar";
 import AppFooter from "./components/layout/AppFooter";
 import IConfirm from "./components/ios/IConfirm";
 import IToast from "./components/ios/IToast";
+import ImportModal from "./components/accounts/ImportModal";
+import CommandPalette from "./components/CommandPalette";
+import HotkeysCheatSheet from "./components/HotkeysCheatSheet";
+import IContextMenuPortal from "./components/ios/IContextMenu";
+import TaskDrawer from "./components/TaskDrawer";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { useDockBadge } from "./hooks/useDockBadge";
+import { useGlobalHotkeys } from "./hooks/useGlobalHotkeys";
+import { useWindowGeometryMemory } from "./hooks/useWindowGeometryMemory";
 import { useMainViewStore } from "./stores/useMainViewStore";
 import { useAccountStore } from "./stores/useAccountStore";
 import { useSettingsStore } from "./stores/useSettingsStore";
 import { useMitmStatusStore } from "./stores/useMitmStatusStore";
+import { startTaskPolling } from "./stores/useTaskStore";
 import {
   DEFAULT_MAIN_VIEW,
   type ShellViewTab,
@@ -41,8 +50,17 @@ const resolveShellViewTab = (value: string | null | undefined): ShellViewTab =>
     : DEFAULT_MAIN_VIEW;
 
 export default function App() {
+  // 1.2: 全局快捷键（Cmd+1~6 / Cmd+R / Cmd+K / Cmd+, / ?）
+  useGlobalHotkeys();
+  // 2.4: 启动还原窗口几何 + 1.5s 防抖写盘
+  useWindowGeometryMemory();
+  // 2.3: Dock / 标题栏徽章反映未读通知 + 号池告急
+  useDockBadge();
+
   const activeTab = useMainViewStore((s) => s.activeTab);
   const setActiveTab = useMainViewStore((s) => s.setActiveTab);
+  const importModalOpen = useMainViewStore((s) => s.importModalOpen);
+  const closeImportModal = useMainViewStore((s) => s.closeImportModal);
 
   // 启动数据加载：settings → 账号 → MITM 状态
   useEffect(() => {
@@ -56,6 +74,7 @@ export default function App() {
     }
     mitm.startPolling();
     void accounts.ensureAccountsLoaded();
+    const stopTaskPolling = startTaskPolling();
 
     // 从后台切回前台时统一刷新（与 Vue 版 F2 修复一致）
     let lastFocusRefresh = 0;
@@ -76,9 +95,28 @@ export default function App() {
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
 
+    // 1.2: Cmd+R / 命令面板「刷新当前 view」 — 根据当前 tab 触发对应刷新
+    const onMainViewRefresh = () => {
+      const tab = useMainViewStore.getState().activeTab;
+      if (tab === "Dashboard") {
+        void useAccountStore.getState().fetchAccounts(true);
+        void useMitmStatusStore.getState().fetchStatus(true);
+      } else if (tab === "Accounts") {
+        void useAccountStore.getState().fetchAccounts(true);
+      } else if (tab === "Settings") {
+        void useSettingsStore.getState().fetchSettings(true);
+      } else {
+        // Usage/Relay/Cleanup 各自有 polling，统一刷一遍 store 兜底
+        void useMitmStatusStore.getState().fetchStatus(true);
+      }
+    };
+    window.addEventListener("mainview-refresh", onMainViewRefresh);
+
     return () => {
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("mainview-refresh", onMainViewRefresh);
       useMitmStatusStore.getState().stopPolling();
+      stopTaskPolling();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -103,6 +141,11 @@ export default function App() {
       </div>
       <IConfirm />
       <IToast />
+      <TaskDrawer />
+      <ImportModal isOpen={importModalOpen} onClose={closeImportModal} />
+      <CommandPalette />
+      <HotkeysCheatSheet />
+      <IContextMenuPortal />
     </div>
   );
 }

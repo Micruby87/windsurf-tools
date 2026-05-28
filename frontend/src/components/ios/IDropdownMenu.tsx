@@ -110,7 +110,7 @@ export default function IDropdownMenu({
         <div
           role="menu"
           className={[
-            "absolute z-[80] mt-2 origin-top rounded-[18px] border border-black/[0.06] bg-white/95 p-1.5 shadow-[0_18px_48px_-16px_rgba(15,23,42,0.28)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#1C1C1E]/96",
+            "absolute z-[80] mt-2 origin-top rounded-[18px] border border-black/[0.06] bg-white/95 p-1.5 shadow-[0_18px_48px_-16px_rgba(15,23,42,0.28)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-[#1C1C1E]/95",
             width,
             align === "right" ? "right-0" : "left-0",
           ].join(" ")}

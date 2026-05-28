@@ -1,6 +1,8 @@
 import { useEffect, useMemo } from "react";
 import {
   Copy,
+  Keyboard,
+  ListChecks,
   Lock,
   Monitor,
   Moon,
@@ -9,9 +11,16 @@ import {
   Sun,
 } from "lucide-react";
 import { APIInfo } from "../../api/wails";
+import NotificationCenter from "../NotificationCenter";
 import { useAccountStore } from "../../stores/useAccountStore";
+import { useMainViewStore } from "../../stores/useMainViewStore";
 import { useMitmStatusStore } from "../../stores/useMitmStatusStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
+import {
+  useHasRunningTask,
+  useMergedTasks,
+  useTaskStore,
+} from "../../stores/useTaskStore";
 import { APP_VERSION } from "../../utils/appMeta";
 import { APP_PRODUCT_NAME, APP_PRODUCT_TAGLINE } from "../../utils/appMode";
 import { themeLabel, useThemeStore } from "../../utils/theme";
@@ -86,21 +95,49 @@ export default function Header() {
   const healthyCount =
     status?.pool_status?.filter((item) => item.healthy).length ?? 0;
 
-  const onlineEmailFull = String(activeKey?.key_short || "").trim();
-  const onlineEmail = onlineEmailFull
-    ? onlineEmailFull.length > 28
-      ? `${onlineEmailFull.slice(0, 26)}…`
-      : onlineEmailFull
+  // 0.1: 优先 nickname > email > key_short。后端 GetMitmProxyStatus 已经把 nickname/email
+  // 填到 PoolKeyInfo（按 KeyHash 严格匹配），前端不能再只用 key_short hash。
+  const onlineKeyShortFull = String(activeKey?.key_short || "").trim();
+  const onlineLabelFull = (
+    activeKey?.nickname ||
+    activeKey?.email ||
+    onlineKeyShortFull ||
+    ""
+  ).trim();
+  const onlineEmail = onlineLabelFull
+    ? onlineLabelFull.length > 28
+      ? `${onlineLabelFull.slice(0, 26)}…`
+      : onlineLabelFull
     : status?.running
     ? "等待活跃 Key"
     : "MITM 未启动";
   const onlineSummary = !status?.running
     ? "启动后将从 MITM 号池轮换"
     : `健康 ${healthyCount} / ${poolCount}`;
-  const sessionStateLabel = onlineEmailFull ? "当前活跃 Key" : "MITM 状态";
+  const sessionStateLabel = onlineLabelFull ? "当前活跃 Key" : "MITM 状态";
   const sessionStateTone = status?.running
     ? "border-emerald-500/18 bg-emerald-500/[0.08] text-emerald-700 dark:text-emerald-300"
     : "border-black/[0.06] bg-black/[0.03] text-ios-textSecondary dark:border-white/[0.08] dark:bg-white/[0.06] dark:text-ios-textSecondaryDark";
+
+  // 1.5: 当前活跃账号 ID，用于点击卡片跳转高亮。
+  const currentAccountId = useMemo(() => {
+    if (!activeKey?.email) return "";
+    const acc = accounts.find((a) => a.email === activeKey.email);
+    return acc?.id ?? "";
+  }, [activeKey, accounts]);
+
+  const highlightAndJumpToAccount = useMainViewStore(
+    (s) => s.highlightAndJumpToAccount,
+  );
+  const setActiveTab = useMainViewStore((s) => s.setActiveTab);
+  const handleSessionCardClick = () => {
+    if (currentAccountId) {
+      highlightAndJumpToAccount(currentAccountId);
+    } else {
+      // 没有活跃账号 → 退化为跳到 Accounts 列表
+      setActiveTab("Accounts");
+    }
+  };
 
   const ThemeIcon =
     themeMode === "light" ? Sun : themeMode === "dark" ? Moon : Monitor;
@@ -133,11 +170,18 @@ export default function Header() {
       </div>
 
       <div className="no-drag-region flex min-w-0 items-center justify-end gap-2">
-        <div
+        <button
+          type="button"
           className={[
-            "hidden min-w-[240px] max-w-[360px] items-center gap-3 rounded-[18px] border px-3.5 py-2 shadow-[0_8px_22px_rgba(15,23,42,0.05)] lg:flex",
+            "no-drag-region hidden min-w-[240px] max-w-[360px] items-center gap-3 rounded-[18px] border px-3.5 py-2 shadow-[0_8px_22px_rgba(15,23,42,0.05)] lg:flex transition-all ios-btn hover:-translate-y-[1px] hover:shadow-[0_12px_28px_rgba(15,23,42,0.08)]",
             sessionStateTone,
           ].join(" ")}
+          title={
+            currentAccountId
+              ? `点击跳到「${onlineLabelFull}」账号卡${onlineKeyShortFull ? ` · ${onlineKeyShortFull}` : ""}`
+              : onlineKeyShortFull || "点击跳到号池页"
+          }
+          onClick={handleSessionCardClick}
         >
           <div
             className={[
@@ -149,16 +193,13 @@ export default function Header() {
           >
             <RadioTower className="h-4 w-4" strokeWidth={2.4} />
           </div>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 text-left">
             <div className="flex items-center gap-2">
               <span className="truncate text-[10px] font-bold uppercase tracking-[0.16em]">
                 {sessionStateLabel}
               </span>
             </div>
-            <div
-              className="mt-1 truncate text-[12px] font-semibold text-ios-text dark:text-ios-textDark"
-              title={onlineEmailFull || ""}
-            >
+            <div className="mt-1 truncate text-[12px] font-semibold text-ios-text dark:text-ios-textDark">
               {onlineEmail}
             </div>
           </div>
@@ -169,15 +210,20 @@ export default function Header() {
                 ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                 : "bg-black/[0.05] text-ios-textSecondary dark:bg-white/[0.06] dark:text-ios-textSecondaryDark",
             ].join(" ")}
-            title={onlineEmailFull || onlineSummary}
           >
             {onlineSummary}
           </span>
-        </div>
+        </button>
 
-        <div
-          className="flex min-w-0 max-w-[220px] items-center gap-2 rounded-full border border-black/[0.06] bg-black/[0.03] px-3 py-1.5 text-[11px] font-medium text-ios-textSecondary dark:border-white/[0.08] dark:bg-white/[0.06] dark:text-ios-textSecondaryDark lg:hidden"
-          title={onlineEmailFull || ""}
+        <button
+          type="button"
+          className="no-drag-region flex min-w-0 max-w-[220px] items-center gap-2 rounded-full border border-black/[0.06] bg-black/[0.03] px-3 py-1.5 text-[11px] font-medium text-ios-textSecondary transition-colors hover:bg-black/[0.06] dark:border-white/[0.08] dark:bg-white/[0.06] dark:text-ios-textSecondaryDark dark:hover:bg-white/[0.1] lg:hidden"
+          title={
+            currentAccountId
+              ? `点击跳到「${onlineLabelFull}」账号卡`
+              : onlineKeyShortFull || "点击跳到号池页"
+          }
+          onClick={handleSessionCardClick}
         >
           <span
             className={[
@@ -186,7 +232,7 @@ export default function Header() {
             ].join(" ")}
           />
           <span className="truncate">{onlineEmail}</span>
-        </div>
+        </button>
 
         {isPinned ? (
           <div
@@ -216,6 +262,22 @@ export default function Header() {
           </button>
         ) : null}
 
+        <NotificationCenter />
+
+        <TaskButton />
+
+        <button
+          type="button"
+          className="no-drag-region hidden md:flex h-9 w-9 items-center justify-center rounded-full border border-black/[0.06] bg-white/70 text-ios-text shadow-sm transition-colors hover:bg-black/5 dark:border-white/[0.08] dark:bg-white/[0.06] dark:text-ios-textDark dark:hover:bg-white/10"
+          title="快捷键速查（按 ? 打开 / 按 ⌘K 打开命令面板）"
+          aria-label="快捷键速查"
+          onClick={() =>
+            window.dispatchEvent(new CustomEvent("open-hotkeys-cheatsheet"))
+          }
+        >
+          <Keyboard className="w-[16px] h-[16px]" strokeWidth={2.4} />
+        </button>
+
         <button
           type="button"
           className="flex h-9 w-9 items-center justify-center rounded-full border border-black/[0.06] bg-white/70 text-ios-text shadow-sm transition-colors hover:bg-black/5 dark:border-white/[0.08] dark:bg-white/[0.06] dark:text-ios-textDark dark:hover:bg-white/10"
@@ -227,5 +289,38 @@ export default function Header() {
         </button>
       </div>
     </header>
+  );
+}
+
+/** F1: Header 上的「任务进度」按钮（运行中显示红点 + 计数徽章） */
+function TaskButton() {
+  const setOpen = useTaskStore((s) => s.setOpen);
+  const hasRunning = useHasRunningTask();
+  const tasks = useMergedTasks();
+  const total = tasks.length;
+  if (total === 0 && !hasRunning) {
+    return null;
+  }
+  return (
+    <button
+      type="button"
+      className="no-drag-region relative flex h-9 w-9 items-center justify-center rounded-full border border-black/[0.06] bg-white/70 text-ios-text shadow-sm transition-colors hover:bg-black/5 dark:border-white/[0.08] dark:bg-white/[0.06] dark:text-ios-textDark dark:hover:bg-white/10"
+      title={
+        hasRunning
+          ? `${tasks.filter((t) => t.running).length} 个任务进行中`
+          : `${total} 个任务（已完成）`
+      }
+      aria-label="任务进度"
+      onClick={() => setOpen(true)}
+    >
+      <ListChecks className="w-[18px] h-[18px]" strokeWidth={2.5} />
+      {hasRunning ? (
+        <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white dark:ring-[#1C1C1E] animate-pulse" />
+      ) : total > 0 ? (
+        <span className="absolute -top-1 -right-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-ios-blue px-1 text-[9px] font-black text-white ring-2 ring-white dark:ring-[#1C1C1E]">
+          {total}
+        </span>
+      ) : null}
+    </button>
   );
 }

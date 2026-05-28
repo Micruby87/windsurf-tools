@@ -20,6 +20,12 @@ export function CleanupStartupCache():Promise<Array<main.CleanupResult>>;
 
 export function CleanupWindsurf(arg1:Array<string>):Promise<Array<main.CleanupResult>>;
 
+export function ClearAllMitmExhausted():Promise<number>;
+
+export function ClearFinishedTasks():Promise<void>;
+
+export function ClearMitmKeyExhausted(arg1:string):Promise<boolean>;
+
 export function DeleteAccount(arg1:string):Promise<void>;
 
 export function DeleteAccountsByGroup(arg1:string):Promise<number>;
@@ -38,9 +44,9 @@ export function GetAccount(arg1:string):Promise<models.Account>;
 
 export function GetAllAccounts():Promise<Array<models.Account>>;
 
-export function GetCaptureDir():Promise<string>;
-
 export function GetClashRotatorRunning():Promise<boolean>;
+
+export function GetDashboardMetrics():Promise<main.DashboardMetrics>;
 
 export function GetJailbreakDefaultOverride():Promise<string>;
 
@@ -49,8 +55,6 @@ export function GetJailbreakRuntime():Promise<main.JailbreakRuntime>;
 export function GetManualPinStatus():Promise<main.ManualPinStatus>;
 
 export function GetMitmCAPath():Promise<string>;
-
-export function GetMitmDebugDumpEnabled():Promise<boolean>;
 
 export function GetMitmFullCaptureEnabled():Promise<boolean>;
 
@@ -62,13 +66,11 @@ export function GetOpenAIRelayStatus():Promise<services.OpenAIRelayStatus>;
 
 export function GetPerformanceTips():Promise<Array<main.PerformanceTip>>;
 
-export function GetProtoDumpDir():Promise<string>;
-
 export function GetRotationPoolStatus():Promise<main.RotationPoolStatus>;
 
 export function GetSettings():Promise<models.Settings>;
 
-export function GetStaticCacheDir():Promise<string>;
+export function GetTasks():Promise<Array<main.Task>>;
 
 export function GetUsageRecords(arg1:number):Promise<Array<services.UsageRecord>>;
 
@@ -104,7 +106,13 @@ export function RefreshAllTokens():Promise<Record<string, string>>;
 
 export function ResetJailbreakStats():Promise<void>;
 
+export function RestoreWindowGeometry():Promise<Record<string, any>>;
+
+export function RevealCaptureDir():Promise<string>;
+
 export function RevealJailbreakOverrideFolder():Promise<string>;
+
+export function RevealProtoDumpDir():Promise<string>;
 
 export function RotationPoolRefreshQuotasNow():Promise<void>;
 
@@ -113,6 +121,10 @@ export function RotationPoolSwitchNow():Promise<string>;
 export function RunDiagnostics():Promise<main.DiagnoseReport>;
 
 export function SaveJailbreakOverrideFile(arg1:string):Promise<string>;
+
+export function SaveWindowGeometry(arg1:number,arg2:number,arg3:number,arg4:number,arg5:boolean):Promise<void>;
+
+export function SendDesktopNotification(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function SetSilentFromFlag(arg1:boolean):Promise<void>;
 

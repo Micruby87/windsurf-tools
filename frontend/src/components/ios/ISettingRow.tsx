@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import IInfoTooltip from "./IInfoTooltip";
 
 interface Props {
   title?: string;
@@ -15,6 +16,8 @@ interface Props {
   extra?: ReactNode;
   /** 右侧 control（IToggle / INumberStepper / 输入框 / 按钮等） */
   children?: ReactNode;
+  /** 4.4: 标题旁的 ? 详细说明（hover/click 弹气泡） */
+  tooltip?: ReactNode;
 }
 
 /**
@@ -29,6 +32,7 @@ export default function ISettingRow({
   label,
   extra,
   children,
+  tooltip,
 }: Props) {
   const wrapperCls = [
     "px-5 sm:px-6 py-4 transition-colors",
@@ -53,13 +57,14 @@ export default function ISettingRow({
                 {title ? (
                   <div
                     className={[
-                      "text-[15px] font-bold leading-snug mb-0.5",
+                      "text-[15px] font-bold leading-snug mb-0.5 inline-flex items-center",
                       destructive
                         ? "text-rose-700 dark:text-rose-300"
                         : "text-gray-900 dark:text-gray-100",
                     ].join(" ")}
                   >
                     {title}
+                    {tooltip ? <IInfoTooltip>{tooltip}</IInfoTooltip> : null}
                   </div>
                 ) : null}
                 {description ? (
