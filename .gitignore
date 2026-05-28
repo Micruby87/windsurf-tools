@@ -12,8 +12,9 @@ frontend/node_modules
 # 勿提交：含本地调试凭证样例
 test_debug.go
 
-# Cursor / 缓存
+# Cursor / Claude Code / 缓存
 .cursor/
+.claude/
 **/__pycache__/
 *.pyc
 

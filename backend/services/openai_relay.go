@@ -43,6 +43,14 @@ func (r *OpenAIRelay) SetOnSuccess(fn func(apiKey string)) {
 	r.mu.Unlock()
 }
 
+// SetUpstreamProxy 运行时切换出站代理 URL。下次 Start / rebuildUpstreamTransport 时生效。
+// 与 MitmProxy.SetUpstreamProxy 对齐:改字段不重建 transport,避免切换瞬间 in-flight 被 abort。
+func (r *OpenAIRelay) SetUpstreamProxy(proxyURL string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.proxyURL = strings.TrimSpace(proxyURL)
+}
+
 type OpenAIRelayStatus struct {
 	Running bool   `json:"running"`
 	Port    int    `json:"port"`

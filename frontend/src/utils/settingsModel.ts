@@ -47,6 +47,7 @@ export function createDefaultSettings(): models.Settings {
     switch_cooldown_base_sec: 300,
     manual_pin_enabled: false,
     manual_pin_account_id: '',
+    mitm_route_mode: 'pool',
     rotation_pool_enabled: false,
     rotation_pool_account_ids: [],
     rotation_pool_interval_min: 5,
@@ -58,6 +59,7 @@ export function createDefaultSettings(): models.Settings {
     openai_relay_enabled: false,
     openai_relay_port: 8787,
     openai_relay_secret: '',
+    proxy_url: '',
     debug_log: false,
     import_concurrency: 3,
     forge_enabled: false,
@@ -116,6 +118,10 @@ export function normalizeSettings(raw: unknown): models.Settings {
     ),
     manual_pin_enabled: 'manual_pin_enabled' in s ? Boolean(s.manual_pin_enabled) : false,
     manual_pin_account_id: String(s.manual_pin_account_id ?? ''),
+    mitm_route_mode:
+      typeof s.mitm_route_mode === 'string' && (s.mitm_route_mode === 'pool' || s.mitm_route_mode === 'providers')
+        ? (s.mitm_route_mode as 'pool' | 'providers')
+        : 'pool',
     rotation_pool_enabled:
       'rotation_pool_enabled' in s ? Boolean(s.rotation_pool_enabled) : false,
     rotation_pool_account_ids: Array.isArray(s.rotation_pool_account_ids)
@@ -137,6 +143,7 @@ export function normalizeSettings(raw: unknown): models.Settings {
     openai_relay_enabled: 'openai_relay_enabled' in s ? Boolean(s.openai_relay_enabled) : base.openai_relay_enabled,
     openai_relay_port: Math.max(1, Math.min(65535, Number(s.openai_relay_port) || 8787)),
     openai_relay_secret: String(s.openai_relay_secret ?? ''),
+    proxy_url: String(s.proxy_url ?? ''),
     debug_log: 'debug_log' in s ? Boolean(s.debug_log) : false,
     import_concurrency: Math.max(1, Math.min(20, Number(s.import_concurrency) || 3)),
     forge_enabled: 'forge_enabled' in s ? Boolean(s.forge_enabled) : false,
@@ -346,6 +353,8 @@ export type SettingsForm = {
   manual_pin_enabled: boolean
   /** 锁定到的账号 ID（UUID） */
   manual_pin_account_id: string
+  /** MITM 路由模式：'pool' 走号池(默认) / 'providers' 走第三方提供商分流 */
+  mitm_route_mode: 'pool' | 'providers'
   /** 轮换池总开关 */
   rotation_pool_enabled: boolean
   /** 池内账号 ID 列表（UUID） */
@@ -366,6 +375,7 @@ export type SettingsForm = {
   openai_relay_enabled: boolean
   openai_relay_port: number
   openai_relay_secret: string
+  proxy_url: string
   /** 调试日志：开启后将切号/代理/额度判定写入 debug.log */
   debug_log: boolean
   /** 导入并发数 1～20 */
@@ -435,6 +445,8 @@ export function settingsToForm(s: models.Settings): SettingsForm {
     ),
     manual_pin_enabled: (s as any).manual_pin_enabled === true,
     manual_pin_account_id: String((s as any).manual_pin_account_id ?? ''),
+    mitm_route_mode:
+      (s as any).mitm_route_mode === 'providers' ? 'providers' : 'pool',
     rotation_pool_enabled: (s as any).rotation_pool_enabled === true,
     rotation_pool_account_ids: Array.isArray((s as any).rotation_pool_account_ids)
       ? (s as any).rotation_pool_account_ids.filter((x: unknown) => typeof x === 'string' && (x as string).trim() !== '')
@@ -448,6 +460,7 @@ export function settingsToForm(s: models.Settings): SettingsForm {
     openai_relay_enabled: s.openai_relay_enabled === true,
     openai_relay_port: Math.max(1, Number(s.openai_relay_port) || 8787),
     openai_relay_secret: String(s.openai_relay_secret ?? ''),
+    proxy_url: String((s as any).proxy_url ?? ''),
     debug_log: s.debug_log === true,
     import_concurrency: Math.max(1, Math.min(20, Number(s.import_concurrency) || 3)),
     forge_enabled: s.forge_enabled === true,
@@ -510,6 +523,7 @@ export function formToSettings(form: SettingsForm): models.Settings {
     switch_cooldown_base_sec: clampSwitchCooldownSec(form.switch_cooldown_base_sec),
     manual_pin_enabled: form.manual_pin_enabled,
     manual_pin_account_id: (form.manual_pin_account_id ?? '').trim(),
+    mitm_route_mode: form.mitm_route_mode === 'providers' ? 'providers' : 'pool',
     rotation_pool_enabled: form.rotation_pool_enabled,
     rotation_pool_account_ids: Array.isArray(form.rotation_pool_account_ids)
       ? form.rotation_pool_account_ids.filter((x) => typeof x === 'string' && x.trim() !== '')
@@ -523,6 +537,7 @@ export function formToSettings(form: SettingsForm): models.Settings {
     openai_relay_enabled: form.openai_relay_enabled,
     openai_relay_port: Math.max(1, Math.min(65535, Math.round(form.openai_relay_port) || 8787)),
     openai_relay_secret: (form.openai_relay_secret ?? '').trim(),
+    proxy_url: (form.proxy_url ?? '').trim(),
     debug_log: form.debug_log,
     import_concurrency: Math.max(1, Math.min(20, Math.round(form.import_concurrency) || 3)),
     forge_enabled: form.forge_enabled,

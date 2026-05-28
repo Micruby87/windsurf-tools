@@ -56,6 +56,8 @@ func (a *App) UpdateSettings(settings models.Settings) error {
 	a.applyOpenAIRelaySettings()
 	a.applyClashRotatorSettings()
 	a.applyRotationPoolSettings()
+	// 代理配置变更时刷新 transport 池 + 同步代理 URL 给 MITM / Relay
+	a.refreshTransportPool()
 	// 动态切换调试日志
 	if prev.DebugLog != settings.DebugLog {
 		utils.InitDebugLogger(a.store.DataDir(), settings.DebugLog)
@@ -121,4 +123,19 @@ func (a *App) ImportSettings(jsonText string) error {
 		imported.MitmJailbreakOverride = current.MitmJailbreakOverride
 	}
 	return a.UpdateSettings(imported)
+}
+
+// refreshTransportPool 刷新全局 transport 池 + 同步代理 URL 给 MITM / Relay。
+func (a *App) refreshTransportPool() {
+	if a.transportPool == nil {
+		return
+	}
+	a.transportPool.Refresh()
+	proxyURL := a.transportPool.RawProxyURL()
+	if a.mitmProxy != nil {
+		a.mitmProxy.SetUpstreamProxy(proxyURL)
+	}
+	if a.openaiRelay != nil {
+		a.openaiRelay.SetUpstreamProxy(proxyURL)
+	}
 }

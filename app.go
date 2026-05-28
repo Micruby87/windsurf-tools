@@ -22,6 +22,8 @@ import (
 type App struct {
 	ctx                    context.Context
 	store                  *store.Store
+	providerStore          *store.ProviderAccountStore
+	transportPool          *services.TransportPool
 	windsurfSvc            *services.WindsurfService
 	mitmProxy              *services.MitmProxy
 	openaiRelay            *services.OpenAIRelay
@@ -65,6 +67,21 @@ func (a *App) initBackend() error {
 		return fmt.Errorf("存储初始化失败: %w", err)
 	}
 	a.store = s
+	ps, err := store.NewProviderAccountStore(s.DataDir())
+	if err != nil {
+		return fmt.Errorf("提供商账号存储初始化失败: %w", err)
+	}
+	a.providerStore = ps
+	// ── 全局出站 transport 池 ──
+	a.transportPool = services.NewTransportPool(func() services.ProxyConfig {
+		s := a.store.GetSettings()
+		return services.ProxyConfig{
+			ProxyURL:           s.ProxyURL,
+			ClashControllerURL: s.ClashControllerURL,
+			ClashSecret:        s.ClashSecret,
+			ClashRotateEnabled: s.ClashRotateEnabled,
+		}
+	})
 	a.windsurfSvc = services.NewWindsurfService("")
 	a.tasks = NewTaskRegistry()
 	a.switchHistory = newSwitchHistoryStore(s.DataDir())
@@ -88,11 +105,15 @@ func (a *App) initBackend() error {
 	// ── MITM Proxy & OpenAI Relay（回调钩子统一在 wireProxyCallbacks 注册）──
 	a.mitmProxy = services.NewMitmProxy(a.windsurfSvc, func(msg string) {
 		utils.DLog("%s", msg)
-	}, "", a.usageTracker)
+	}, a.transportPool.RawProxyURL(), a.usageTracker)
 	a.openaiRelay = services.NewOpenAIRelay(a.mitmProxy, func(msg string) {
 		utils.DLog("%s", msg)
-	}, "", a.usageTracker)
+	}, a.transportPool.RawProxyURL(), a.usageTracker)
 	a.wireProxyCallbacks()
+	// 阶段 2 提供商路由注入: 总览胶囊点亮"提供商" + chat path 时,
+	// MITM 走 cascade↔OpenAI/Anthropic/Gemini 翻译流水, 而非号池。
+	a.mitmProxy.SetRouter(a)
+	a.mitmProxy.SetTransportPool(a.transportPool)
 	// ── 导入流水线 ──（必须在 mitmProxy 创建后，因为 syncMitmPoolKeys 依赖它）
 	// enrichAccountInfo 返回 bool，子包不关心结果只用副作用，这里用 closure 包裹丢弃返回值。
 	a.importMod = importsvc.New(importsvc.Deps{
@@ -140,8 +161,18 @@ func (a *App) shouldStartHidden() bool {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	if err := a.initBackend(); err != nil {
-		log.Printf("[WindsurfTools] desktop init: %v", err)
-		log.Fatalf("%v", err)
+		log.Printf("[WindsurfTools] desktop init failed: %v", err)
+		// 交互模式弹原生错误对话框；silent / 服务化模式只记日志。
+		// 用 runtime.Quit 而非 log.Fatalf，让 OnShutdown 跑完（托盘 / hosts / CA / 443 listener 能被清理）。
+		if !a.silentFromFlag {
+			_, _ = runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+				Type:    runtime.ErrorDialog,
+				Title:   "Windsurf Tools 初始化失败",
+				Message: err.Error(),
+			})
+		}
+		runtime.Quit(a.ctx)
+		return
 	}
 	log.Printf("[WindsurfTools] desktop backend initialized")
 	if a.supportsTray() {

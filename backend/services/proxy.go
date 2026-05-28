@@ -320,6 +320,14 @@ type MitmProxy struct {
 
 	usageTracker *UsageTracker
 
+	// ── 阶段 2 提供商路由(可选注入) ──
+	// router 非 nil 且 RouteMode()=="providers" 时, chat path 走
+	// 提供商上游(cascade 翻译 → OpenAI/Anthropic/Gemini → 翻回 cascade frame)。
+	// 未注入或胶囊处于 pool 模式时永远走号池(向后兼容)。
+	router Router
+	// transportPool 全局出站 transport 池(可选注入)。provider Route 用它走代理。
+	transportPool *TransportPool
+
 	// ── Session binding (per-conversation sticky routing) ──
 	sessionsMu sync.RWMutex
 	sessionMap map[string]*SessionBinding // conversation_id → binding
@@ -920,7 +928,25 @@ func (p *MitmProxy) SetWindsurfService(windsurfSvc *WindsurfService) {
 	p.windsurfSvc = windsurfSvc
 }
 
-func (p *MitmProxy) SetOutboundProxy(proxyURL string) {
+// SetRouter 注入提供商路由源。
+// 注入后, 只要 router.RouteMode()=="providers" 且请求路径是 chat path,
+// MITM serve() handler 会绕过号池 reverse proxy, 走 Route
+// 把 cascade 请求翻译给 OpenAI/Anthropic/Gemini 上游。
+// router=nil = 关闭(永远走号池)。
+func (p *MitmProxy) SetRouter(router Router) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.router = router
+}
+
+// SetTransportPool 注入全局 transport 池。provider Route 用它走代理出站。
+func (p *MitmProxy) SetTransportPool(pool *TransportPool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.transportPool = pool
+}
+
+func (p *MitmProxy) SetUpstreamProxy(proxyURL string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.proxyURL = strings.TrimSpace(proxyURL)
@@ -1857,6 +1883,12 @@ func (p *MitmProxy) serve() {
 		if isChatPath(r.URL.Path) {
 			atomic.AddInt64(&p.inFlightChatStreams, 1)
 			defer atomic.AddInt64(&p.inFlightChatStreams, -1)
+		}
+		// ★ 阶段 2 提供商路由分流: 胶囊=providers 且 chat path 时,
+		// 走 Route(cascade ↔ OpenAI/Anthropic/Gemini)
+		// 而不是号池 reverse proxy。
+		if p.tryServeRoute(w, r) {
+			return
 		}
 		proxy.ServeHTTP(w, r)
 	})

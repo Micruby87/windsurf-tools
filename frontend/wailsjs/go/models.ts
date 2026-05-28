@@ -233,11 +233,11 @@ export namespace main {
 	    email: string;
 	    api_key: string;
 	    remark: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new EmailAPIKeyItem(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.email = source["email"];
@@ -398,6 +398,26 @@ export namespace main {
 	        this.skipped = source["skipped"];
 	        this.error = source["error"];
 	        this.hint = source["hint"];
+	    }
+	}
+	export class ProviderKeyItem {
+	    provider: string;
+	    base_url: string;
+	    token: string;
+	    remark: string;
+	    nickname: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProviderKeyItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.base_url = source["base_url"];
+	        this.token = source["token"];
+	        this.remark = source["remark"];
+	        this.nickname = source["nickname"];
 	    }
 	}
 	export class RotationPoolStatus {
@@ -609,6 +629,48 @@ export namespace models {
 	        this.created_at = source["created_at"];
 	    }
 	}
+	export class ProviderAccount {
+	    id: string;
+	    provider: string;
+	    base_url: string;
+	    auth_token: string;
+	    nickname?: string;
+	    remark?: string;
+	    status: string;
+	    created_at: string;
+	    last_used_at?: string;
+	    used_quota?: number;
+	    total_quota?: number;
+	    activated?: boolean;
+	    active_model?: string;
+	    models?: string[];
+	    models_refreshed_at?: string;
+	    models_error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProviderAccount(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.provider = source["provider"];
+	        this.base_url = source["base_url"];
+	        this.auth_token = source["auth_token"];
+	        this.nickname = source["nickname"];
+	        this.remark = source["remark"];
+	        this.status = source["status"];
+	        this.created_at = source["created_at"];
+	        this.last_used_at = source["last_used_at"];
+	        this.used_quota = source["used_quota"];
+	        this.total_quota = source["total_quota"];
+	        this.activated = source["activated"];
+	        this.active_model = source["active_model"];
+	        this.models = source["models"];
+	        this.models_refreshed_at = source["models_refreshed_at"];
+	        this.models_error = source["models_error"];
+	    }
+	}
 	export class Settings {
 	    concurrent_limit: number;
 	    auto_refresh_tokens: boolean;
@@ -630,6 +692,7 @@ export namespace models {
 	    minimize_to_tray: boolean;
 	    desktop_notifications: boolean;
 	    silent_start: boolean;
+	    mitm_route_mode: string;
 	    mitm_debug_dump: boolean;
 	    mitm_full_capture: boolean;
 	    smart_friend_enabled: boolean;
@@ -651,6 +714,7 @@ export namespace models {
 	    openai_relay_enabled: boolean;
 	    openai_relay_port: number;
 	    openai_relay_secret: string;
+	    proxy_url: string;
 	    clash_rotate_enabled: boolean;
 	    clash_controller_url: string;
 	    clash_secret: string;
@@ -692,6 +756,7 @@ export namespace models {
 	        this.minimize_to_tray = source["minimize_to_tray"];
 	        this.desktop_notifications = source["desktop_notifications"];
 	        this.silent_start = source["silent_start"];
+	        this.mitm_route_mode = source["mitm_route_mode"];
 	        this.mitm_debug_dump = source["mitm_debug_dump"];
 	        this.mitm_full_capture = source["mitm_full_capture"];
 	        this.smart_friend_enabled = source["smart_friend_enabled"];
@@ -713,6 +778,7 @@ export namespace models {
 	        this.openai_relay_enabled = source["openai_relay_enabled"];
 	        this.openai_relay_port = source["openai_relay_port"];
 	        this.openai_relay_secret = source["openai_relay_secret"];
+	        this.proxy_url = source["proxy_url"];
 	        this.clash_rotate_enabled = source["clash_rotate_enabled"];
 	        this.clash_controller_url = source["clash_controller_url"];
 	        this.clash_secret = source["clash_secret"];

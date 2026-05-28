@@ -23,6 +23,11 @@
     "src/**/*.d.ts",
     "src/**/*.tsx"
   ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "wailsjs"
+  ],
   "references": [
     {
       "path": "./tsconfig.node.json"
