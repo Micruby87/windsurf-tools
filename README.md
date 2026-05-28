@@ -1,21 +1,23 @@
 # Windsurf Tools 🏄‍♂️
 
-[![Version](https://img.shields.io/badge/Version-v1.9.0-success)](https://github.com/seven7763/windsurf-tools/releases)
+[![Version](https://img.shields.io/badge/Version-v1.10.0-success)](https://github.com/seven7763/windsurf-tools/releases)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](#运行环境--prerequisites)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Wails](https://img.shields.io/badge/Built%20with-Wails%20v2-red)](https://wails.io/)
 
-> **Windsurf IDE 无限续杯工具 — 多账号自动切换、额度用完自动换号、无感代理、本地 OpenAI 接口**
-> Seamless MITM proxy for Windsurf IDE — auto account rotation when quota exhausted, batch import, local OpenAI-compatible relay. One-click setup, cross-platform.
+> **Windsurf IDE 无限续杯工具 — 多账号自动切换、额度用完自动换号、无感代理、本地 OpenAI 接口、第三方 LLM 接管**
+> Seamless MITM proxy for Windsurf IDE — auto rotation, batch import, OpenAI Relay, **third-party LLM takeover (OpenAI / Anthropic / Gemini)**. One-click setup, cross-platform.
 
-基于 [Wails v2](https://wails.io/) (Go + React + Zustand) 的桌面工具，为 Windsurf / Codeium IDE 提供：
+基于 [Wails v2](https://wails.io/) (Go + **React 18 + Zustand + TypeScript 5**) 的桌面工具，为 Windsurf / Codeium IDE 提供：
 
 - 🔄 **额度用完自动换号** — 检测到当前账号额度耗尽，秒级自动切换到下一个可用账号，Cascade 对话不中断、不报错，真正无限续杯
 - 🎯 **多账号号池管理** — Free / Trial / Pro / Max 多套餐统一管理，支持手动锁定、轮换池、会话粘性，想用哪个用哪个
+- 🌟 **第三方 LLM 接管** — 一键切到「提供商」模式：IDE chat 请求被 MITM 翻译给你自己的 OpenAI / Anthropic / Gemini key（支持 DeepSeek / Kimi / 通义 / 豆包 / MiniMax / 智谱 / xAI 全套兼容协议），不再依赖 Windsurf 账号
 - 📥 **批量导入** — 支持 API Key / JWT / 邮箱密码 / `邮箱----devin-session-token` 等多种格式混合粘贴，智能识别一键导入
 - 🕵️ **无感 MITM 代理** — 透明劫持 Windsurf 请求，protobuf 层替换身份和计费字段，IDE 内无需任何操作
 - 🌐 **本地 OpenAI Relay** — SSE 流式输出，兼容 `OpenAI SDK` / `LobeChat` / `ChatGPT-Next-Web` / `Cursor`，自带健康检测和故障倒换
-- 📊 **实时用量统计** — Token 流水、美金成本聚合、完整请求审计，钱花在哪一目了然
+- 📊 **实时用量统计 + 命令面板** — Token 流水、美金成本聚合、完整请求审计；⌘K 全局命令面板 / 通知中心 / 任务进度抽屉
+- 🛰️ **上游代理热切换** — 手动 ProxyURL > Clash + IP 轮换 > 系统代理 > 直连，按优先级自动选；切换瞬间 in-flight 请求不被 abort
 - 🧹 **清道夫** — 一键清理 Cascade 对话残留和渲染缓存，释放硬盘空间
 - 🔐 **一键启动** — macOS / Windows / Linux 全平台，CA 安装 + Hosts 配置一次弹窗搞定
 
@@ -238,6 +240,51 @@ SNIFF_BASE_DIR=/tmp/sniff go run ./tools/sniff                 # 跨平台抓包
 ---
 
 ## 🔧 最近修复 | Recent Fixes
+
+### v1.10.0 (2026-05-28)
+
+**第三方 LLM 接管 + Vue→React 全量重构 + 上游代理热切换 | Provider Takeover + React Rewrite + Upstream Proxy Hot-Switch**
+
+**🌟 第三方 LLM 接管(全新)**
+
+- **「号池↔提供商」路由模式胶囊** — 侧栏一键切换，胶囊点亮「提供商」时 IDE chat 流量被 MITM 翻译给第三方 key，胶囊在「号池」时走原 Windsurf 轮换。`Settings.MitmRouteMode` 字段持久化，重启沿用
+- **Provider 账号独立 CRUD** — 新「提供商」视图(`Providers.tsx`)与 Windsurf 号池物理隔离：独立存储 `provider_accounts.json`、独立 wails API、独立批量导入对话框。10 家协议一键入池：OpenAI / Anthropic / Google Gemini / DeepSeek / Kimi (Moonshot) / 通义千问 / 豆包 / MiniMax / 智谱 / xAI
+- **Cascade ↔ Provider 协议翻译** — `cascade_codec.go` 解 GetChatMessage protobuf → IR(model + messages + system) → 走 OpenAI 兼容 / Anthropic /v1/messages / Gemini streamGenerateContent → SSE delta 实时翻译回 cascade frame(F1=botID + F3=text + F4=seq + F5=EOT)推回 IDE
+- **自动 model 列表拉取** — 提供商账号入库后异步触发 `{base_url}/v1/models` 拉取，UI 卡片下拉直接选 active_model；失败原因写到 `models_error` 字段供 UI 显示
+- **「下一席位」轮询调度** — 同 active_model 候选里 atomic round-robin 翻到下一张，整库无候选时返回 `no_candidates`、单卡返回 `only_one`，调度顺序按 ID 稳定排序
+
+**🛰️ 上游代理热切换重构**
+
+- **手动 ProxyURL 输入** — Settings 新增「手动出站代理 URL」(http/https/socks5)，优先级最高(高于 Clash 探活、环境变量)。空 = 不启用走后续优先级
+- **Dashboard 上游代理状态卡** — 一眼看到当前请求走哪条出口(Clash + 轮换 / Clash / 系统 / 手动 / 直连)，URL 自动 redact userinfo (`http://user:pass@host:port` → `http://***@host:port`)，排障神器
+- **TransportPool 全局出站池** — 所有出站 HTTP 走统一 `*http.Client`，自动按 ProxyURL > Clash > 系统 > 直连 优先级；切换瞬间 in-flight 请求不被 abort(改字段 + `CloseIdleConnections`)
+- **Clash secret 双发 + 多域 probe** — 同时设 `Authorization: Bearer` 和 `?secret=` query 兼容 mihomo / clash-meta / 老 fork；`readSystemProxy` 多域(windsurf / anthropic / openai)探活应对 NO_PROXY 边角
+
+**🎨 Vue → React 全量重构**
+
+- **栈替换** — Vue 3 + Pinia → **React 18 + Zustand + TypeScript 5**，删 36 个 `.vue` + 5 个 vue 依赖 ts，Bundle 458KB → 579KB / gzip 124KB → 162KB(因新加大量功能;基础重构后只 414KB / 116KB)
+- **8 个 view 全部 1:1 完整迁移** — Dashboard / Accounts / Providers / Usage / Relay / Cleanup / Settings / Help / About。Accounts 1815 行,Settings 9 个分组完整保留,Usage 含分页流水表 + 5s 自动 poll
+- **新增交互组件** — `CommandPalette.tsx` (⌘K 全局命令面板) / `NotificationCenter.tsx` (通知中心 + 未读徽章) / `TaskDrawer.tsx` (批量任务进度抽屉) / `DashboardMetrics.tsx` (24h 切号趋势 + 原因分布 + Top 账号) / `RotationPoolStatusCard.tsx` / `JailbreakRuntimeCard.tsx` / `ClashAssistant.tsx` / `HotkeysCheatSheet.tsx`
+- **iOS 风原子组件** — 12 个独立可复用:`IBadge` / `ISection` / `IToggle` / `ISegmented` / `ISettingRow` / `IAutoSaveIndicator` / `IModalSheet` / `INumberStepper` / `IDropdownMenu` / `ISelectSheet` / `IContextMenu` / `IInfoTooltip` / `ISecretInput`
+- **新增 hooks** — `useDockBadge`(macOS dock 数字角标) / `useGlobalHotkeys`(⌘K / `?` / `Esc` 路由) / `usePersistentMitmEvents`(MITM 事件本地缓存,刷新不丢) / `useWindowGeometryMemory`(窗口位置/大小记忆)
+- **10 个 zustand store** — `useAccountStore` / `useProviderAccountStore` / `useSettingsStore` / `useMitmStatusStore` / `useRelayStatusStore` / `useUsageStore` / `useTaskStore` / `useNotificationsStore` / `useMainViewStore` / `_async`(共享 createAsyncResource 状态管理)
+
+**🔧 后端 audit 修复 + 新模块**
+
+- **TaskRegistry 批量任务进度** — 后端推前端,UI 抽屉实时显示导入/刷新批次进度
+- **指标聚合 (`app_metrics.go`)** — MITM/Relay 全链路指标采集 + 持久化,接 Dashboard 趋势卡
+- **调度器 (`app_sched.go`)** — 自动切号 / 限额刷新 / 号池健康检查统一调度入口
+- **gzip 池** (`backend/services/gzip_pool.go`) — 复用 `gzip.Writer/Reader` 避免每次请求 New + 防止 sync.Pool 释放后的 panic
+- **OpenAIRelay** — 端口被占降级,从 desiredPort 起最多探 14 个 (8787-8800);字符级流式 + Anthropic /v1/messages 路径增强;truncated_block 兜底解析
+- **启动/关闭 hardening** — `log.Fatalf` → `runtime.Quit` 让 OnShutdown 跑完清理 hosts/CA/443/托盘;`shutdownOnce` + `cleanupOnce` 防止 wails 重入路径重复处理;cleanup 同步等到底,残留 hosts/CA 的代价比卡几秒严重得多
+- **修了 macOS 打包 link 冲突** — `getlantern/systray` 在 darwin 自家定义 `AppDelegate` 与 wails AppDelegate 类名硬冲突。当前版本 macOS 不启用顶栏托盘(只 Windows 启用)
+
+**🛠️ 仓库健度**
+
+- 新增 `.gitattributes` 强制 LF 入库,修 Windows core.autocrlf 历史污染(批量 CRLF→LF 规范化 58 个文本文件)
+- 新增 `.github/workflows/verify.yml` CI:PR 提交时自动跑 `go build` + `go vet` + `go test ./...` + `npm run build`
+- Wails 升 v2.11.0 → v2.12.0(消除 wails build 时 CLI 版本不匹配 Warning)
+- Anthropic SDK 集成模型升级 Opus 4.7
 
 ### v1.9.0 (2026-05-14)
 
