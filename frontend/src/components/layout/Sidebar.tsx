@@ -107,11 +107,11 @@ export default function Sidebar() {
   const totalCount = status?.pool_status?.length ?? 0;
 
   return (
-    <nav className="w-60 h-full ios-glass border-r border-ios-divider dark:border-ios-dividerDark flex flex-col pt-6 pb-6 z-40 shrink-0">
+    <nav className="w-60 h-full ios-glass border-r border-ios-divider dark:border-ios-dividerDark flex flex-col pt-6 pb-6 z-40 shrink-0 overflow-y-auto">
       <div className="px-5 pb-2 mb-2 text-xs font-semibold uppercase text-ios-textSecondary dark:text-ios-textSecondaryDark tracking-wider">
         导航
       </div>
-      <ul className="flex-1 space-y-1.5 px-3">
+      <ul className="space-y-1.5 px-3">
         {MENU_ITEMS.map((item) => {
           const Icon = item.icon;
           const active = activeTab === item.id;
