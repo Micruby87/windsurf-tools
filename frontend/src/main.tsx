@@ -2,6 +2,20 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./style.css";
+
+// 浏览器预览模式 (vite dev + VITE_MOCK_BRIDGE=1):伪造 Wails bridge,
+// 让 React 能在浏览器里渲染所有 view (供 playwright 截图、UI 调试)。
+// 生产构建中 import.meta.env 是常量字面量,这段被 tree-shake,不带 mock。
+if (import.meta.env.VITE_MOCK_BRIDGE === '1') {
+  const { installMockBridge } = await import('./mock/wailsBridge')
+  installMockBridge()
+  // 给 playwright 截图脚本暴露主 view store + settings store
+  const { useMainViewStore } = await import('./stores/useMainViewStore')
+  const { useSettingsStore } = await import('./stores/useSettingsStore')
+  ;(window as any).__MAIN_VIEW_STORE__ = useMainViewStore
+  ;(window as any).__SETTINGS_STORE__ = useSettingsStore
+}
+
 import "./utils/theme";
 
 // 把 React 渲染异常 / window error / unhandled promise 集中渲染到 #app-runtime-error

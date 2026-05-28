@@ -39,35 +39,75 @@
 | :---: |
 | ![Accounts](docs/images/preview-accounts.png) |
 
-#### 3. 本地 OpenAI API 兼容中转 (OpenAI Relay)
+#### 3. 第三方提供商接管 (Providers · v1.10.0 全新)
+**侧栏「号池↔提供商」胶囊一键切换 — 提供商模式下 IDE chat 流量被 MITM 翻译给你自己的 OpenAI / Anthropic / Gemini key。** 物理隔离的独立账号池，自动拉 `/v1/models`，激活开关 + active_model 下拉一目了然。10 家协议:OpenAI / Anthropic / Google Gemini / DeepSeek / Kimi / 通义 / 豆包 / MiniMax / 智谱 / xAI。
+
+| 提供商账号池 |
+| :---: |
+| ![Providers](docs/images/preview-providers.png) |
+
+| 提供商批量导入对话框 |
+| :---: |
+| ![Providers Import](docs/images/preview-providers-import.png) |
+
+#### 4. 路由模式胶囊点亮提供商 (Dashboard Providers Mode)
+切到提供商时,Dashboard 顶部出现「提供商概览」面板:每家 provider 当前可用/总数 + accent 渐变条;空池态引导跳 Providers 页批量导入。
+
+| 提供商接管模式 |
+| :---: |
+| ![Dashboard Providers](docs/images/preview-dashboard-providers.png) |
+
+#### 5. 本地 OpenAI API 兼容中转 (OpenAI Relay)
 集成 SSE 流式输出能力。您可以将自己购买或获取到的账号无缝接入类似 `ChatGPT-Next-Web`, `LobeChat`, `Cursor`, 甚至 `OpenAI SDK` 客户端。后端自带健康检测与故障倒换，前端全UI掌控模型映射。
 
 | OpenAI Relay 控制台 |
 | :---: |
 | ![Relay](docs/images/preview-relay.png) |
 
-#### 4. 流量用量统计面板 (Usage & Diagnostics)
+#### 6. 流量用量统计面板 (Usage & Diagnostics)
 全新设计的 **Usage Dashboard** 精确计算并聚合从您机器发往 Windsurf / OpenAI 的全部流通 Token 的数量以及大略转换的美金价值，全方位杜绝隐藏费用，更有完整历史流水审计明细。
 
 | 数据用量与流水洞察 |
 | :---: |
 | ![Usage](docs/images/preview-usage.png) |
 
-#### 5. 高级抓包与环境调试引擎 (Advanced MITM Config)
-强大的 MITM 号池设置机制！从会话固化（Session Binding）、静默截获到高能协议体 Protobuf 的深度解析与截流。更支持直接抓取原始流水（Dump），方便二次排查分析。
+#### 7. 高级抓包与环境调试引擎 (Advanced MITM Config)
+强大的 MITM 号池设置机制！从会话固化（Session Binding）、静默截获到高能协议体 Protobuf 的深度解析与截流。更支持直接抓取原始流水（Dump），方便二次排查分析。新增**手动出站代理 URL**(http/https/socks5),优先级高于 Clash 探活。
 
 | 核心层代理与策略配置 |
 | :---: |
 | ![Settings](docs/images/preview-settings.png) |
 
-#### 6. 垃圾与残留清道夫 (Clean-Up Optimizer)
+#### 8. 垃圾与残留清道夫 (Clean-Up Optimizer)
 不再让海量 Cascade AI 对话数据和渲染缓存吃掉你珍贵的硬盘空间！轻轻一点即可完成各环节的精简化部署清理，重获新生。
 
 | 磁盘瘦身优化 |
 | :---: |
 | ![Cleanup](docs/images/preview-cleanup.png) |
 
-> ⚠️ *声明：当前仓库内上述预览图均为最新桌面端界面的脱敏展示图。我们永远不会窃取并上传任何账号池数据，全部本地化存储于 `settings.json`与 `accounts.json`。*
+#### 9. 命令面板与暗色主题 (⌘K · Dark Mode · v1.10.0)
+全局 ⌘K 命令面板 — 模糊搜索命令 / 视图 / 账号,键盘流玩家友好。完整暗色主题贯穿所有 view。
+
+| 全局命令面板 |
+| :---: |
+| ![Command Palette](docs/images/preview-command-palette.png) |
+
+| 暗色主题 |
+| :---: |
+| ![Dark Mode](docs/images/preview-dark-mode.png) |
+
+#### 10. 帮助中心与关于页 (Help · About)
+7 章 FAQ 折叠 + 搜索过滤,覆盖模式选择 / API Key / 导入格式 / MITM 启用 / 轮换池 / Clash / 破限注入。关于页含作者微信群轮换 + 法律免责声明。
+
+| 帮助 FAQ |
+| :---: |
+| ![Help](docs/images/preview-help.png) |
+
+| 关于页 |
+| :---: |
+| ![About](docs/images/preview-about.png) |
+
+> ⚠️ *声明：当前仓库内上述预览图为通过 vite dev + 伪造 mock 数据自动截取,所有账号 / token / IP 均为占位字符串,无任何真实信息。本工具永远不会窃取并上传任何账号池数据，全部本地化存储于 `settings.json` 与 `accounts.json`。*
 
 ---
 
