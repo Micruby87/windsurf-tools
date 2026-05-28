@@ -121,6 +121,10 @@ export function GetMitmProxyStatus() {
   return window['go']['main']['App']['GetMitmProxyStatus']();
 }
 
+export function GetUpstreamProxyStatus() {
+  return window['go']['main']['App']['GetUpstreamProxyStatus']();
+}
+
 export function GetTasks() {
   return window['go']['main']['App']['GetTasks']();
 }

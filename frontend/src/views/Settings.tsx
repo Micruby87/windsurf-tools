@@ -487,6 +487,18 @@ export default function Settings() {
 
         {/* ═══ Clash IP 轮换 ═══ */}
         <Section title="Clash IP 轮换" icon="🔀" anchor="clash-settings">
+          <ISettingRow
+            title="手动出站代理 URL"
+            description="直填 http/https/socks5 代理地址,优先级最高(高于 Clash 探活、环境变量)。空 = 不启用。例: socks5://127.0.0.1:7890"
+          >
+            <input
+              value={form.proxy_url}
+              onChange={(e) => patch({ proxy_url: e.target.value })}
+              type="text"
+              className="no-drag-region w-[280px] rounded-[12px] border border-black/[0.06] bg-white px-3 py-2 text-[13px] font-mono dark:border-white/[0.08] dark:bg-white/[0.06]"
+              placeholder="（空 = 不启用）"
+            />
+          </ISettingRow>
           <ClashAssistant
             controllerURL={form.clash_controller_url}
             secret={form.clash_secret}

@@ -43,6 +43,13 @@ export const APIInfo = {
   nextActiveAccount: (AppHooks as any).NextActiveAccount as () => Promise<any>,
   getActiveAccount: (AppHooks as any).GetActiveAccount as () => Promise<any>,
 
+  // 上游代理状态(Clash+轮换 / Clash / 系统 / 直连)
+  getUpstreamProxyStatus: (AppHooks as any).GetUpstreamProxyStatus as () => Promise<{
+    source: string
+    url: string
+    last_applied_at: string
+  }>,
+
   refreshAllTokens: AppHooks.RefreshAllTokens,
   refreshAllQuotas: AppHooks.RefreshAllQuotas,
   refreshAccountQuota: AppHooks.RefreshAccountQuota,

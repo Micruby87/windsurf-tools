@@ -199,6 +199,11 @@ export default function Dashboard() {
   const [troubleshootingLoading, setTroubleshootingLoading] = useState(false);
   const [healthExpanded, setHealthExpanded] = useState(true);
   const [healthOnlyIssues, setHealthOnlyIssues] = useState(false);
+  const [proxyStatus, setProxyStatus] = useState<{
+    source: string
+    url: string
+    last_applied_at: string
+  } | null>(null);
 
   const mitmPanelRef = useRef<HTMLDivElement | null>(null);
   const handledDiagnosticsRequestSeqRef = useRef(0);
@@ -208,8 +213,52 @@ export default function Dashboard() {
       useAccountStore.getState().ensureAccountsLoaded(),
       useMitmStatusStore.getState().ensureStatusLoaded(),
       useRelayStatusStore.getState().ensureStatusLoaded(),
+      fetchProxyStatus(),
     ]);
   }, []);
+
+  async function fetchProxyStatus() {
+    try {
+      const s = await APIInfo.getUpstreamProxyStatus();
+      setProxyStatus(s ?? null);
+    } catch {
+      setProxyStatus(null);
+    }
+  }
+
+  function proxySourceLabel(s?: string): string {
+    switch (s) {
+      case "clash+nodes":
+        return "Clash + 轮换";
+      case "clash":
+        return "Clash";
+      case "manual":
+        return "手动代理";
+      case "env":
+        return "系统代理";
+      case "direct":
+        return "直连";
+      default:
+        return "—";
+    }
+  }
+
+  function proxySourceTone(s?: string): string {
+    switch (s) {
+      case "clash+nodes":
+        return "bg-violet-500/10 text-violet-700 dark:text-violet-300";
+      case "clash":
+        return "bg-sky-500/10 text-sky-700 dark:text-sky-300";
+      case "manual":
+        return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+      case "env":
+        return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+      case "direct":
+        return "bg-slate-500/10 text-slate-700 dark:text-slate-300";
+      default:
+        return "bg-slate-500/10 text-slate-700 dark:text-slate-300";
+    }
+  }
 
   const refreshOverview = async () => {
     setRefreshing(true);
@@ -218,6 +267,7 @@ export default function Dashboard() {
         useAccountStore.getState().fetchAccounts(true),
         useMitmStatusStore.getState().fetchStatus(),
         useRelayStatusStore.getState().fetchStatus(true),
+        fetchProxyStatus(),
       ]);
     } finally {
       setRefreshing(false);
@@ -433,6 +483,18 @@ export default function Dashboard() {
           : "暂未发现周额度阻断",
       tone: "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300",
       icon: Activity,
+    },
+    {
+      key: "upstream-proxy",
+      label: "上游代理",
+      value: proxySourceLabel(proxyStatus?.source),
+      detail: proxyStatus?.url
+        ? proxyStatus.url === "<direct>"
+          ? "未走任何代理"
+          : proxyStatus.url
+        : "未启动 / 未探活",
+      tone: proxySourceTone(proxyStatus?.source),
+      icon: Globe,
     },
   ];
 

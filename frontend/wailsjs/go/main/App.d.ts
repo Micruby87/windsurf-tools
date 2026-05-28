@@ -64,6 +64,8 @@ export function GetMitmFullCaptureEnabled():Promise<boolean>;
 
 export function GetMitmProxyStatus():Promise<services.MitmProxyStatus>;
 
+export function GetUpstreamProxyStatus():Promise<main.UpstreamProxyStatus>;
+
 export function GetTasks():Promise<Array<main.Task>>;
 
 export function ClearFinishedTasks():Promise<void>;

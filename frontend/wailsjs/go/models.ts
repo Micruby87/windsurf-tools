@@ -571,6 +571,23 @@ export namespace main {
 		}
 	}
 
+	export class UpstreamProxyStatus {
+	    source: string;
+	    url: string;
+	    last_applied_at: string;
+
+	    static createFrom(source: any = {}) {
+	        return new UpstreamProxyStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source = source["source"];
+	        this.url = source["url"];
+	        this.last_applied_at = source["last_applied_at"];
+	    }
+	}
+
 }
 
 export namespace models {

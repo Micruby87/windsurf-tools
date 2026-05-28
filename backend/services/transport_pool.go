@@ -89,6 +89,13 @@ func (p *TransportPool) Source() ProxySource {
 	return p.resolvedSource
 }
 
+// ResolvedAt 返回上次 Refresh 完成的时间(空池时返回 zero time)。
+func (p *TransportPool) ResolvedAt() time.Time {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.resolvedAt
+}
+
 // ── 内部 ──
 
 func (p *TransportPool) buildTransport() *http.Transport {
