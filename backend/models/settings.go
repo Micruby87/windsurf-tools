@@ -92,6 +92,12 @@ type Settings struct {
 	// OpenAIRelaySecret Bearer token 鉴权密钥（空则不鉴权）
 	OpenAIRelaySecret string `json:"openai_relay_secret"`
 
+	// ── 出站代理 ──
+	// ProxyURL 用户直填的代理地址(http/https/socks5)。优先级最高:
+	// ProxyURL > Clash controller 探活 > 环境变量 > 直连。
+	// 空串 = 不启用手动代理(走后续优先级)。
+	ProxyURL string `json:"proxy_url"`
+
 	// ── Clash IP 轮换 ──
 	// ClashRotateEnabled 通过 Clash/Mihomo external-controller 周期性切换出站节点（换 IP 防限速）
 	ClashRotateEnabled bool `json:"clash_rotate_enabled"`
@@ -154,7 +160,7 @@ func DefaultSettings() Settings {
 		OpenAIRelayPort:             8787,
 		OpenAIRelaySecret:           "",
 		ClashRotateEnabled:          false,
-		ClashControllerURL:          "http://127.0.0.1:9090",
+		ClashControllerURL:          "http://127.0.0.1:9097",
 		ClashSecret:                 "",
 		ClashGroup:                  "",
 		ClashNodes:                  "",

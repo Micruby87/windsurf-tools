@@ -59,20 +59,22 @@ func (p *MitmProxy) tryServeRoute(w http.ResponseWriter, r *http.Request) bool {
 	ctx, cancel := context.WithTimeout(ctx, routeTimeout)
 	defer cancel()
 
-	httpClient := HTTPClientFromTransport(p.upstreamBaseTransport())
+	httpClient := p.routeClient()
 	Route(ctx, w, httpClient, router, cascadeBody)
 	return true
 }
 
-// upstreamBaseTransport 暴露 *http.Transport 给 provider transport 复用 —
-// 这样能继承 MitmProxy.SetUpstreamProxy 配置的 Clash/系统代理 + 连接池。
-func (p *MitmProxy) upstreamBaseTransport() http.RoundTripper {
+// routeClient 返回给 provider Route 用的 *http.Client。
+// 优先用全局 TransportPool(支持 clash/env 代理 + 连接池复用);
+// 未注入时回退 http.DefaultClient(直连)。
+func (p *MitmProxy) routeClient() *http.Client {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if p.upstreamBase == nil {
-		return nil
+	pool := p.transportPool
+	p.mu.RUnlock()
+	if pool != nil {
+		return pool.Client()
 	}
-	return p.upstreamBase
+	return http.DefaultClient
 }
 
 // writeRouteEOSError 直接写 cascade EOS error frame 给 IDE,

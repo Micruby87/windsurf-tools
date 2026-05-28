@@ -284,18 +284,21 @@ export function getImportPlaceholder(provider: ProviderID | null): string {
 
 const URL_RE = /^https?:\/\/[^\s/$.?#].[^\s]*$/i
 
-/** 各 provider 接受的 token 形态(放宽:只挑出明显错误,不限制长度) */
+/** 各 provider 接受的 token 形态。
+ * 统一放宽为 sk- 前缀通用风格 — 历史上每家收紧到自家前缀(sk-ant-/AIza/xai-)
+ * 反而把第三方代理商发的兼容 key(sk- 风格)挡在外面。
+ * 后端真正鉴权时上游会把不合法 token 拒掉, UI 这层只挡明显格式错误。 */
 const TOKEN_PATTERNS: Record<ProviderID, RegExp[]> = {
-  openai: [/^sk-proj-[A-Za-z0-9_-]+$/, /^sk-[A-Za-z0-9_-]+$/],
-  anthropic: [/^sk-ant-[A-Za-z0-9_-]+$/],
-  google: [/^AIza[0-9A-Za-z_-]+$/],
+  openai: [/^sk-[A-Za-z0-9_-]+$/],
+  anthropic: [/^sk-[A-Za-z0-9_-]+$/],
+  google: [/^sk-[A-Za-z0-9_-]+$/, /^AIza[0-9A-Za-z_-]+$/],
   deepseek: [/^sk-[A-Za-z0-9_-]+$/],
   moonshot: [/^sk-[A-Za-z0-9_-]+$/],
   qwen: [/^sk-[A-Za-z0-9_-]+$/],
-  doubao: [/^[A-Za-z0-9-]+$/],
-  minimax: [/^eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/],
-  zhipu: [/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/, /^eyJ[A-Za-z0-9_-]+/],
-  xai: [/^xai-[A-Za-z0-9_-]+$/],
+  doubao: [/^sk-[A-Za-z0-9_-]+$/, /^[A-Za-z0-9-]+$/],
+  minimax: [/^sk-[A-Za-z0-9_-]+$/, /^eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/],
+  zhipu: [/^sk-[A-Za-z0-9_-]+$/, /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/, /^eyJ[A-Za-z0-9_-]+/],
+  xai: [/^sk-[A-Za-z0-9_-]+$/, /^xai-[A-Za-z0-9_-]+$/],
 }
 
 export interface ProviderLineParseResult {

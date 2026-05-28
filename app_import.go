@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -426,6 +427,28 @@ func (a *App) RefreshProviderModels(id string) error {
 	return a.fetchAndPersistProviderModels(acc.ID, acc.Provider, acc.BaseURL, acc.AuthToken)
 }
 
+// NextActiveAccount 总览「下一席位」按钮入口。
+// 在 同 active_model + status=active 候选里翻到下一张, 把它置 activated。
+//
+// 返回新激活卡(供前端显示);整库无候选 / 候选只有一张时返回 error,
+// 错误消息分别为 "no_candidates" / "only_one"。
+func (a *App) NextActiveAccount() (models.ProviderAccount, error) {
+	if a.providerStore == nil {
+		return models.ProviderAccount{}, fmt.Errorf("provider store 未初始化")
+	}
+	return a.providerStore.NextActivated()
+}
+
+// GetActiveAccount 返回当前全局唯一激活的 provider 账号。
+// 没有激活卡时返回 zero 值;前端用此查询 Sidebar / Dashboard 当前活跃显示。
+func (a *App) GetActiveAccount() models.ProviderAccount {
+	if a.providerStore == nil {
+		return models.ProviderAccount{}
+	}
+	acc, _ := a.providerStore.GetActivated()
+	return acc
+}
+
 // refreshProviderModelsAsync goroutine 入口：忽略 error，已写到 store 字段。
 func (a *App) refreshProviderModelsAsync(id, provider, baseURL, token string) {
 	_ = a.fetchAndPersistProviderModels(id, provider, baseURL, token)
@@ -439,7 +462,11 @@ func (a *App) fetchAndPersistProviderModels(id, provider, baseURL, token string)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	list, err := services.FetchProviderModels(ctx, nil, provider, baseURL, token)
+	var httpClient *http.Client
+	if a.transportPool != nil {
+		httpClient = a.transportPool.Client()
+	}
+	list, err := services.FetchProviderModels(ctx, httpClient, provider, baseURL, token)
 	if err != nil {
 		_ = a.providerStore.SetProviderModels(id, nil, err.Error())
 		return err

@@ -49,6 +49,14 @@ func NewWindsurfService(proxyURL string) *WindsurfService {
 	}
 }
 
+// SetHTTPClient 替换内部 http.Client（用于接入全局 TransportPool）。
+// 保留 30s Timeout + cookie jar 行为。
+func (s *WindsurfService) SetHTTPClient(c *http.Client) {
+	if c != nil {
+		s.client = c
+	}
+}
+
 // ── Firebase Auth ──
 
 type FirebaseSignInResp struct {

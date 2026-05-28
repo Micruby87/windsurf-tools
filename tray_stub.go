@@ -7,3 +7,5 @@ package main
 func (a *App) startTray() {}
 
 func traySupported() bool { return false }
+
+func (a *App) quitTray() {}

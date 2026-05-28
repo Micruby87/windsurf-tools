@@ -249,7 +249,7 @@ type MitmProxy struct {
 	listener net.Listener
 	running  bool
 	port     int
-	proxyURL string // 上游代理 (如 http://127.0.0.1:7890)
+	proxyURL string // 出站代理 (如 http://127.0.0.1:7890)
 
 	poolKeys   []string // ordered list of api keys
 	keyStates  map[string]*PoolKeyState
@@ -290,6 +290,8 @@ type MitmProxy struct {
 	// 提供商上游(cascade 翻译 → OpenAI/Anthropic/Gemini → 翻回 cascade frame)。
 	// 未注入或胶囊处于 pool 模式时永远走号池(向后兼容)。
 	router Router
+	// transportPool 全局出站 transport 池(可选注入)。provider Route 用它走代理。
+	transportPool *TransportPool
 
 	// ── Session binding (per-conversation sticky routing) ──
 	sessionsMu sync.RWMutex
@@ -808,27 +810,17 @@ func (p *MitmProxy) SetRouter(router Router) {
 	p.router = router
 }
 
-// SetUpstreamProxy 切换上游代理 URL。
-// transport.Proxy 是闭包，下一次请求自动读到新值；同时清掉 idle 连接池避免
-// HTTP/2 复用旧出口 IP（同 ClashRotator 切节点后 CloseUpstreamIdleConnections）。
-func (p *MitmProxy) SetUpstreamProxy(proxyURL string) {
-	proxyURL = strings.TrimSpace(proxyURL)
+// SetTransportPool 注入全局 transport 池。provider Route 用它走代理出站。
+func (p *MitmProxy) SetTransportPool(pool *TransportPool) {
 	p.mu.Lock()
-	changed := p.proxyURL != proxyURL
-	p.proxyURL = proxyURL
-	t := p.upstreamBase
-	p.mu.Unlock()
-	if !changed {
-		return
-	}
-	if proxyURL == "" {
-		p.log("上游代理: <direct>")
-	} else {
-		p.log("上游代理: %s", proxyURL)
-	}
-	if t != nil {
-		t.CloseIdleConnections()
-	}
+	defer p.mu.Unlock()
+	p.transportPool = pool
+}
+
+func (p *MitmProxy) SetUpstreamProxy(proxyURL string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.proxyURL = strings.TrimSpace(proxyURL)
 }
 
 // SetDebugDump 开启/关闭 proto dump（GetChatMessage 请求/响应字段树写入文件）
@@ -1220,8 +1212,7 @@ func (p *MitmProxy) CurrentAPIKey() string {
 	return p.poolKeys[p.currentIdx]
 }
 
-// buildUpstreamTransport 构建出站 Transport。
-// t.Proxy 是闭包：每次请求重新读 p.proxyURL，运行时 SetUpstreamProxy 即时生效。
+// buildUpstreamTransport 构建出站 Transport，支持通过用户本地代理 (如 Clash) 访问上游
 func (p *MitmProxy) buildUpstreamTransport() *http.Transport {
 	t := &http.Transport{
 		TLSClientConfig: &tls.Config{
@@ -1237,14 +1228,11 @@ func (p *MitmProxy) buildUpstreamTransport() *http.Transport {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 180 * time.Second,
 	}
-	t.Proxy = func(*http.Request) (*url.URL, error) {
-		p.mu.RLock()
-		raw := p.proxyURL
-		p.mu.RUnlock()
-		if raw == "" {
-			return nil, nil
+	if p.proxyURL != "" {
+		if u, err := url.Parse(p.proxyURL); err == nil {
+			t.Proxy = http.ProxyURL(u)
+			p.log("出站代理: %s", p.proxyURL)
 		}
-		return url.Parse(raw)
 	}
 	return t
 }

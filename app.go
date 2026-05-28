@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"sync/atomic"
 	"time"
 	"windsurf-tools-wails/backend/services"
 	"windsurf-tools-wails/backend/store"
@@ -18,6 +17,7 @@ type App struct {
 	ctx                    context.Context
 	store                  *store.Store
 	providerStore          *store.ProviderAccountStore
+	transportPool          *services.TransportPool
 	windsurfSvc            *services.WindsurfService
 	mitmProxy              *services.MitmProxy
 	openaiRelay            *services.OpenAIRelay
@@ -37,14 +37,6 @@ type App struct {
 	traySupportedFn        func() bool
 	// silentFromFlag 由 main 在解析到 --silent 时设置，与 settings.silent_start 二选一即可触发静默启动
 	silentFromFlag bool
-	// applyProxyMu / applyProxyEpoch 串行化 applyUpstreamProxy：
-	// 防止 settings 连点保存 / 多个入口同时触发时，多个 goroutine 并发探活后旧 stale 结果覆盖新结果。
-	// epoch 每次 +1，goroutine 拿锁后检查 epoch 不是最新则丢弃。
-	applyProxyMu    sync.Mutex
-	applyProxyEpoch atomic.Uint64
-	// lastProxyStatus 保存最近一次 applyUpstreamProxy 的下发结果，
-	// 供前端 Dashboard 角标 / GetUpstreamProxyStatus 查询（排障神器）。
-	lastProxyStatus atomic.Pointer[UpstreamProxyStatus]
 	// shutdownOnce 防 wails 在 panic / second-instance / 快速退出路径上重入 OnShutdown，
 	// 避免 cleanupMitmEnvironment（写 hosts / 卸 CA）重入报错。
 	shutdownOnce sync.Once
@@ -66,16 +58,26 @@ func (a *App) initBackend() error {
 		return fmt.Errorf("提供商账号存储初始化失败: %w", err)
 	}
 	a.providerStore = ps
+	// ── 全局出站 transport 池 ──
+	settings := a.store.GetSettings()
+	a.transportPool = services.NewTransportPool(func() services.ProxyConfig {
+		s := a.store.GetSettings()
+		return services.ProxyConfig{
+			ProxyURL:           s.ProxyURL,
+			ClashControllerURL: s.ClashControllerURL,
+			ClashSecret:        s.ClashSecret,
+			ClashRotateEnabled: s.ClashRotateEnabled,
+		}
+	})
 	a.windsurfSvc = services.NewWindsurfService("")
 	// ── 调试日志 ──
-	settings := a.store.GetSettings()
 	utils.InitDebugLogger(s.DataDir(), settings.DebugLog)
 	// ── 创建跨服务的用量跟踪器 ──
 	a.usageTracker = services.NewUsageTracker(s.DataDir())
 
 	a.mitmProxy = services.NewMitmProxy(a.windsurfSvc, func(msg string) {
 		utils.DLog("%s", msg)
-	}, "", a.usageTracker)
+	}, a.transportPool.RawProxyURL(), a.usageTracker)
 	a.mitmProxy.SetOnKeyExhausted(func(apiKey string) {
 		utils.DLog("[回调] onKeyExhausted 触发: key=%s...", apiKey[:min(12, len(apiKey))])
 		accID := findAccountIDForMITMAPIKey(a.store.GetAllAccounts(), apiKey)
@@ -117,10 +119,11 @@ func (a *App) initBackend() error {
 	})
 	// 阶段 2 提供商路由注入: 总览胶囊点亮"提供商" + chat path 时,
 	// MITM 走 cascade↔OpenAI/Anthropic/Gemini 翻译流水, 而非号池。
-	a.mitmProxy.SetRouter(&routerImpl{app: a})
+	a.mitmProxy.SetRouter(a)
+	a.mitmProxy.SetTransportPool(a.transportPool)
 	a.openaiRelay = services.NewOpenAIRelay(a.mitmProxy, func(msg string) {
 		utils.DLog("%s", msg)
-	}, "", a.usageTracker)
+	}, a.transportPool.RawProxyURL(), a.usageTracker)
 	a.openaiRelay.SetOnSuccess(func(apiKey string) {
 		accounts := a.store.GetAllAccounts()
 		accID := findAccountIDForMITMAPIKey(accounts, apiKey)
@@ -142,7 +145,6 @@ func (a *App) initBackend() error {
 	a.restartQuotaHotPollIfNeeded()
 	a.applyClashRotatorSettings()
 	a.applyRotationPoolSettings()
-	a.applyUpstreamProxy()
 	return nil
 }
 
@@ -194,6 +196,8 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) shutdown(ctx context.Context) {
 	a.shutdownOnce.Do(func() {
 		log.Printf("[WindsurfTools] desktop shutdown requested")
+		// 清理托盘图标(必须在 shutdown 时主动调, 否则关窗口退出时图标残留)
+		a.quitTray()
 		if a.cancelAutoRefresh != nil {
 			a.cancelAutoRefresh()
 		}

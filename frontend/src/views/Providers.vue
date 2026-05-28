@@ -409,8 +409,20 @@ const refreshModels = async (acc: ProviderAccountModel) => {
       <div
         v-for="acc in filteredAccounts"
         :key="acc.id"
-        class="group relative flex flex-col gap-3 rounded-[24px] border border-black/[0.06] bg-white/80 p-4 shadow-[0_14px_36px_rgba(15,23,42,0.06)] backdrop-blur-xl transition-all hover:border-ios-blue/30 dark:border-white/[0.06] dark:bg-black/25"
+        class="group relative flex flex-col gap-3 rounded-[24px] border bg-white/80 p-4 shadow-[0_14px_36px_rgba(15,23,42,0.06)] backdrop-blur-xl transition-all dark:bg-black/25"
+        :class="
+          acc.activated
+            ? 'border-violet-500/40 ring-2 ring-violet-500/30 ring-offset-1 ring-offset-white dark:ring-offset-black/40'
+            : 'border-black/[0.06] hover:border-ios-blue/30 dark:border-white/[0.06]'
+        "
       >
+        <!-- 当前激活角标 (右上角浮动) -->
+        <span
+          v-if="acc.activated"
+          class="absolute -top-2 -right-2 inline-flex items-center gap-1 rounded-full bg-gradient-to-b from-violet-500 to-fuchsia-500 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-white shadow-md shadow-violet-500/40"
+        >
+          ★ 当前
+        </span>
         <!-- 头部:provider 徽章 + 状态 -->
         <div class="flex items-start justify-between gap-3">
           <div class="flex min-w-0 items-center gap-3">

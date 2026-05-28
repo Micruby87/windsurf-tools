@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Activity, BookOpen, Globe, HardDriveDownload, Hash, Heart, Layers, LayoutDashboard, MessageSquare, Settings, Shield, User, Users } from 'lucide-vue-next'
 import { useAccountStore } from '../../stores/useAccountStore'
+import { useProviderAccountStore } from '../../stores/useAccountStore'
 import { useMitmStatusStore } from '../../stores/useMitmStatusStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { showToast } from '../../utils/toast'
@@ -11,6 +12,7 @@ const props = defineProps<{ activeTab: ShellViewTab }>()
 const emit = defineEmits<{ (e: 'update:activeTab', tab: ShellViewTab): void }>()
 
 const accountStore = useAccountStore()
+const providerStore = useProviderAccountStore()
 const mitmStore = useMitmStatusStore()
 const settingsStore = useSettingsStore()
 
@@ -73,6 +75,20 @@ const activeAccountLabel = computed(() => {
   return email || nick || ''
 })
 
+// 阶段 3: 当前激活的 ProviderAccount 显示文案 (providers 模式下)
+const activeProviderLabel = computed(() => {
+  const acc = providerStore.activeAccount
+  if (!acc) return '尚无激活卡'
+  const nick = String(acc.nickname || '').trim()
+  if (nick) return `${nick} · ${acc.provider}`
+  return `${acc.provider} · ${(acc.auth_token || '').slice(0, 8)}…`
+})
+
+// providers 模式下确保 provider 列表已加载, 否则 activeAccount 为空
+onMounted(() => {
+  void providerStore.ensureAccountsLoaded()
+})
+
 const boundSessions = computed(() => {
   const sessions = mitmStore.status?.active_sessions ?? []
   // 用 PoolKeyHash 精确匹配；长 token 类账号会让 PoolKeyShort 共享 16 字符
@@ -132,16 +148,27 @@ const boundSessions = computed(() => {
         </span>
       </div>
 
-      <!-- 当前活跃 Key -->
-      <div class="mt-2 rounded-[12px] bg-black/[0.03] px-2.5 py-1.5 text-[10px] font-medium text-ios-textSecondary dark:bg-white/[0.05] dark:text-ios-textSecondaryDark">
+      <!-- 当前活跃 Key (providers 模式下显示 provider 激活卡, pool 模式下显示号池 key) -->
+      <div v-if="routeMode === 'providers'" class="mt-2 rounded-[12px] bg-violet-500/[0.06] px-2.5 py-1.5 text-[10px] font-medium text-violet-700 dark:text-violet-300">
+        <div class="flex items-center justify-between gap-1">
+          <span class="font-bold uppercase tracking-[0.15em] text-[9px]">当前提供商</span>
+          <span v-if="providerStore.activeAccount?.active_model" class="rounded-full bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-mono">
+            {{ providerStore.activeAccount.active_model }}
+          </span>
+        </div>
+        <div class="mt-0.5 truncate text-[11px] font-semibold" :title="activeProviderLabel">
+          {{ activeProviderLabel }}
+        </div>
+      </div>
+      <div v-else class="mt-2 rounded-[12px] bg-black/[0.03] px-2.5 py-1.5 text-[10px] font-medium text-ios-textSecondary dark:bg-white/[0.05] dark:text-ios-textSecondaryDark">
         当前活跃 Key
         <div class="mt-0.5 truncate text-[11px] font-semibold text-ios-text dark:text-ios-textDark" :title="activeSummary">
           {{ activeSummary }}
         </div>
       </div>
 
-      <!-- 当前活跃账号 -->
-      <div v-if="activeAccountLabel" class="mt-1.5 flex items-center gap-1 rounded-[12px] bg-ios-blue/[0.06] px-2.5 py-1.5 text-[10px] font-medium text-ios-blue">
+      <!-- 当前活跃账号 (仅 pool 模式) -->
+      <div v-if="routeMode !== 'providers' && activeAccountLabel" class="mt-1.5 flex items-center gap-1 rounded-[12px] bg-ios-blue/[0.06] px-2.5 py-1.5 text-[10px] font-medium text-ios-blue">
         <User class="h-3 w-3 shrink-0" stroke-width="2.4" />
         <span class="truncate" :title="activeAccountLabel">{{ activeAccountLabel }}</span>
       </div>

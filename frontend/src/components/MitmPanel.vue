@@ -26,10 +26,12 @@ import { APIInfo } from "../api/wails";
 import { confirmDialog, showToast } from "../utils/toast";
 import { useSettingsStore } from "../stores/useSettingsStore";
 import { useMitmStatusStore } from "../stores/useMitmStatusStore";
+import { useProviderAccountStore } from "../stores/useAccountStore";
 import { formatDateTimeAsiaShanghai } from "../utils/datetimeAsia";
 
 const settingsStore = useSettingsStore();
 const mitmStore = useMitmStatusStore();
+const providerStore = useProviderAccountStore();
 
 const status = computed(() => mitmStore.status);
 const loading = ref(false);
@@ -199,6 +201,27 @@ const handleToggle = async (on: boolean) => {
 
 const handleSwitchToNext = async () => {
   error.value = "";
+  // 阶段 3: providers 模式下「下一席位」翻 ProviderAccount, 而非 windsurf 号池
+  const routeMode = (settingsStore.settings as any)?.mitm_route_mode;
+  if (routeMode === "providers") {
+    try {
+      const next = await providerStore.next();
+      const label = next?.nickname || next?.provider || "已切换";
+      const model = next?.active_model ? ` (${next.active_model})` : "";
+      showToast(`已切到下一张提供商卡:${label}${model}`, "success");
+    } catch (e: any) {
+      const msg = String(e || "");
+      if (msg.includes("only_one")) {
+        error.value = "同 model 候选只有当前这一张, 无法翻动";
+      } else if (msg.includes("no_candidates")) {
+        error.value = "整库没有满足条件的提供商账号";
+      } else {
+        error.value = `切换失败: ${msg}`;
+      }
+    }
+    return;
+  }
+  // pool 模式 — 老逻辑:翻 windsurf 号池
   try {
     const target = await mitmStore.switchToNext();
     showToast(`MITM 已手动切到下一席位：${target || "已切换"}`, "success");

@@ -19,6 +19,10 @@ func (a *App) startTray() {
 
 func traySupported() bool { return true }
 
+func (a *App) quitTray() {
+	systray.Quit()
+}
+
 func (a *App) onTrayReady() {
 	systray.SetIcon(currentTrayIcon())
 	systray.SetTooltip("Windsurf Tools — 号池 · MITM · 切号")

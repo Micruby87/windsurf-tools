@@ -382,22 +382,6 @@ export namespace main {
 	        this.remark = source["remark"];
 	    }
 	}
-	export class UpstreamProxyStatus {
-	    source: string;
-	    url: string;
-	    last_applied_at: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new UpstreamProxyStatus(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.source = source["source"];
-	        this.url = source["url"];
-	        this.last_applied_at = source["last_applied_at"];
-	    }
-	}
 	export class WindsurfDiskUsage {
 	    categories: CleanupCategory[];
 	    total_bytes: number;
@@ -572,6 +556,7 @@ export namespace models {
 	    openai_relay_enabled: boolean;
 	    openai_relay_port: number;
 	    openai_relay_secret: string;
+	    proxy_url: string;
 	    clash_rotate_enabled: boolean;
 	    clash_controller_url: string;
 	    clash_secret: string;
@@ -626,6 +611,7 @@ export namespace models {
 	        this.openai_relay_enabled = source["openai_relay_enabled"];
 	        this.openai_relay_port = source["openai_relay_port"];
 	        this.openai_relay_secret = source["openai_relay_secret"];
+	        this.proxy_url = source["proxy_url"];
 	        this.clash_rotate_enabled = source["clash_rotate_enabled"];
 	        this.clash_controller_url = source["clash_controller_url"];
 	        this.clash_secret = source["clash_secret"];

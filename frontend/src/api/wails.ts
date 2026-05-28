@@ -40,6 +40,10 @@ export const APIInfo = {
   deleteProviderAccount: (AppHooks as any).DeleteProviderAccount as (id: string) => Promise<void>,
   // 阶段 2: 拉 {base_url}/v1/models 写到 ProviderAccount.models
   refreshProviderModels: (AppHooks as any).RefreshProviderModels as (id: string) => Promise<void>,
+  // 阶段 3: 总览「下一席位」按钮 — 在同 active_model 候选里翻到下一张
+  nextActiveAccount: (AppHooks as any).NextActiveAccount as () => Promise<any>,
+  // 阶段 3: 当前全局唯一激活的 provider 账号(无激活卡时返回空对象)
+  getActiveAccount: (AppHooks as any).GetActiveAccount as () => Promise<any>,
 
   refreshAllTokens: AppHooks.RefreshAllTokens,
   refreshAllQuotas: AppHooks.RefreshAllQuotas,
@@ -130,14 +134,6 @@ export const APIInfo = {
       detail: string;
       fix_hint?: string;
     }>;
-  }>,
-
-  // 上游代理状态（GetUpstreamProxyStatus）—— 排障神器
-  // 让用户在 UI 上直接看到现在走 clash / 系统代理 / 直连
-  getUpstreamProxyStatus: (AppHooks as any).GetUpstreamProxyStatus as () => Promise<{
-    source: 'direct' | 'clash+nodes' | 'clash' | 'system' | 'unknown';
-    url: string;            // 已 redact userinfo，空串 = 直连
-    last_applied_at: string; // RFC3339，空 = 未触发过
   }>,
 
   // Clash IP 轮换

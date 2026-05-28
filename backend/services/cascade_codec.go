@@ -47,7 +47,6 @@ import (
 // ──────────────────────────────────────────────
 
 // CascadeChatRequest 是一次 GetChatMessage 解码后的极简 IR。
-// 只保留协议转换最低需要 — 不含 metadata / generation config / conversation 上下文。
 type CascadeChatRequest struct {
 	// Model IDE 期望的 model 名(F21 字符串)。空字符串 = IDE 用 cascade 默认模型,
 	// 此时上层应回落到卡片 ActiveModel。
@@ -55,7 +54,31 @@ type CascadeChatRequest struct {
 	// System 顶层 F2 system prompt(可空)
 	System string
 	// Messages 按 F3 出现顺序排列的对话列表
-	Messages []ChatMessage
+	Messages []CascadeMessage
+	// Tools F10 repeated — IDE 发送的工具定义列表
+	Tools []CascadeTool
+}
+
+// CascadeMessage 表示历史中的一条消息(比 ChatMessage 更丰富，支持 tool_use/tool_result)。
+type CascadeMessage struct {
+	Role       string          // "user" / "assistant" / "tool"
+	Content    string          // 文本内容
+	ToolUses   []CascadeToolUse // assistant 消息中的工具调用(F6)
+	ToolUseID  string          // tool result 消息关联的 tool_use_id(F7)
+}
+
+// CascadeToolUse 表示 assistant 消息中的一次工具调用。
+type CascadeToolUse struct {
+	ID    string // sub-F1
+	Name  string // sub-F2
+	Input string // sub-F3 — JSON string
+}
+
+// CascadeTool 是 cascade 请求中一个工具定义(F10 子消息)。
+type CascadeTool struct {
+	Name        string // sub-F1
+	Description string // sub-F2
+	Schema      string // sub-F3 — JSON schema 字符串
 }
 
 // DecodeCascadeChatRequest 解一段已经去 gRPC 5 字节 envelope+gzip 后的 protobuf body。
@@ -81,6 +104,11 @@ func DecodeCascadeChatRequest(body []byte) (*CascadeChatRequest, error) {
 				continue
 			}
 			out.Messages = append(out.Messages, msg)
+		case f.FieldNum == 10 && f.WireType == 2:
+			tool, ok := decodeCascadeTool(f.Bytes)
+			if ok {
+				out.Tools = append(out.Tools, tool)
+			}
 		case f.FieldNum == 21 && f.WireType == 2:
 			out.Model = strings.TrimSpace(string(f.Bytes))
 		}
@@ -91,9 +119,31 @@ func DecodeCascadeChatRequest(body []byte) (*CascadeChatRequest, error) {
 	return out, nil
 }
 
-func decodeCascadeChatMessage(data []byte) (ChatMessage, bool) {
+func decodeCascadeTool(data []byte) (CascadeTool, bool) {
 	subFields := parseProtobuf(data)
-	var msg ChatMessage
+	var tool CascadeTool
+	for _, f := range subFields {
+		if f.WireType != 2 {
+			continue
+		}
+		switch f.FieldNum {
+		case 1:
+			tool.Name = string(f.Bytes)
+		case 2:
+			tool.Description = string(f.Bytes)
+		case 3:
+			tool.Schema = string(f.Bytes)
+		}
+	}
+	if tool.Name == "" {
+		return CascadeTool{}, false
+	}
+	return tool, true
+}
+
+func decodeCascadeChatMessage(data []byte) (CascadeMessage, bool) {
+	subFields := parseProtobuf(data)
+	var msg CascadeMessage
 	gotSomething := false
 	for _, f := range subFields {
 		switch {
@@ -104,21 +154,48 @@ func decodeCascadeChatMessage(data []byte) (ChatMessage, bool) {
 				msg.Role = "user"
 			case 2:
 				msg.Role = "assistant"
+			case 4:
+				msg.Role = "tool"
 			default:
 				msg.Role = "user"
 			}
 		case f.FieldNum == 3 && f.WireType == 2:
 			msg.Content = string(f.Bytes)
 			gotSomething = true
+		case f.FieldNum == 6 && f.WireType == 2:
+			tu := decodeCascadeToolUseField(f.Bytes)
+			if tu.ID != "" || tu.Name != "" {
+				msg.ToolUses = append(msg.ToolUses, tu)
+			}
+			gotSomething = true
+		case f.FieldNum == 7 && f.WireType == 2:
+			msg.ToolUseID = string(f.Bytes)
+			gotSomething = true
 		}
 	}
 	if !gotSomething {
-		return ChatMessage{}, false
-	}
-	if msg.Role == "" {
-		msg.Role = "user"
+		return CascadeMessage{}, false
 	}
 	return msg, true
+}
+
+func decodeCascadeToolUseField(data []byte) CascadeToolUse {
+	subFields := parseProtobuf(data)
+	var tu CascadeToolUse
+	for _, f := range subFields {
+		if f.WireType != 2 {
+			continue
+		}
+		switch f.FieldNum {
+		case 1:
+			tu.ID = string(f.Bytes)
+		case 2:
+			tu.Name = string(f.Bytes)
+		case 3:
+			tu.Input = string(f.Bytes)
+		}
+	}
+	return tu
 }
 
 // ──────────────────────────────────────────────
@@ -159,6 +236,44 @@ func EncodeCascadeEOSError(code, message string) []byte {
 	return wrapEnvelope(body, 0x02, false)
 }
 
+// EncodeCascadeToolCallFrame 编一个工具调用帧(F6 sub-protobuf)。
+//
+// cascade 协议中 tool call 的 F6 子消息布局(从真实 proto dump 逆向):
+//
+//	sub-F1 = tool_use_id (string)  — 首帧必带
+//	sub-F2 = tool_name   (string)  — 首帧必带
+//	sub-F3 = input JSON  (string)  — 后续帧增量
+//
+// 用法:
+//   - 工具调用头: EncodeCascadeToolCallFrame(botID, seq, toolUseID, toolName, "")
+//   - JSON 增量:  EncodeCascadeToolCallFrame(botID, seq, "", "", partialJSON)
+func EncodeCascadeToolCallFrame(botID string, seq uint64, toolUseID, toolName, inputDelta string) []byte {
+	var f6 []byte
+	if toolUseID != "" {
+		f6 = append(f6, utils.EncodeStringField(1, toolUseID)...)
+	}
+	if toolName != "" {
+		f6 = append(f6, utils.EncodeStringField(2, toolName)...)
+	}
+	if inputDelta != "" {
+		f6 = append(f6, utils.EncodeStringField(3, inputDelta)...)
+	}
+
+	var body []byte
+	body = append(body, utils.EncodeStringField(1, botID)...)
+
+	now := time.Now()
+	var ts []byte
+	ts = append(ts, encodeVarintField(1, uint64(now.Unix()))...)
+	ts = append(ts, encodeVarintField(2, uint64(now.Nanosecond()))...)
+	body = append(body, encodeBytesField(2, ts)...)
+
+	body = append(body, encodeBytesField(6, f6)...)
+	body = append(body, encodeVarintField(4, seq)...)
+
+	return wrapEnvelope(body, 0x00, false)
+}
+
 // buildCascadeFramePayload 构造一帧响应的 protobuf payload(不含 5 字节 envelope)。
 //
 // 字段布局:
@@ -167,8 +282,12 @@ func EncodeCascadeEOSError(code, message string) []byte {
 //	F2  = sub-message{F1=unix_sec, F2=nanos}
 //	F3  = delta string  (空字符串时跳过 — 末帧 EOT 没有文本只有 F5)
 //	F4  = seq varint
-//	F5  = end-of-turn varint (4 是 IDE 抓包观察到的常见值)
+//	F5  = end-of-turn varint (4=纯文本结束, 10=含 tool_calls 结束)
 func buildCascadeFramePayload(botID, delta string, seq uint64, isEOT bool) []byte {
+	return buildCascadeFramePayloadWithEOTValue(botID, delta, seq, isEOT, 4)
+}
+
+func buildCascadeFramePayloadWithEOTValue(botID, delta string, seq uint64, isEOT bool, eotValue uint64) []byte {
 	var body []byte
 	body = append(body, utils.EncodeStringField(1, botID)...)
 
@@ -183,9 +302,16 @@ func buildCascadeFramePayload(botID, delta string, seq uint64, isEOT bool) []byt
 	}
 	body = append(body, encodeVarintField(4, seq)...)
 	if isEOT {
-		body = append(body, encodeVarintField(5, 4)...)
+		body = append(body, encodeVarintField(5, eotValue)...)
 	}
 	return body
+}
+
+// EncodeCascadeEOTFrameToolCalls 编一个含 tool_calls 的"end-of-turn"数据帧。
+// F5=10 表示本轮包含工具调用(抓包观察值)。
+func EncodeCascadeEOTFrameToolCalls(botID string, seq uint64, gzipPayload bool) []byte {
+	payload := buildCascadeFramePayloadWithEOTValue(botID, "", seq, true, 10)
+	return wrapEnvelope(payload, 0x00, gzipPayload)
 }
 
 // wrapEnvelope 给 protobuf payload 加 5 字节 Connect/gRPC 信封。

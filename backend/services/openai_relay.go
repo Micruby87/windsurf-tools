@@ -30,9 +30,8 @@ type OpenAIRelay struct {
 	proxy        *MitmProxy // 复用账号池
 	logFn        func(string)
 	onSuccess    func(apiKey string) // 请求成功后回调（用于触发额度刷新）
-	proxyURL     string              // 上游代理 URL（运行时可变，t.Proxy 闭包动态读取）
-	upstream     http.RoundTripper   // 持久连接池（可被 retry wrapper 包裹，对外接口）
-	upstreamBase *http.Transport     // 底层 transport，SetUpstreamProxy / 重试路径用它直接 CloseIdleConnections
+	proxyURL     string              // 出站代理
+	upstream     http.RoundTripper   // 持久连接池
 	maxRetry     int                 // 额度耗尽重试次数
 	usageTracker *UsageTracker       // 用量追踪
 }
@@ -44,28 +43,11 @@ func (r *OpenAIRelay) SetOnSuccess(fn func(apiKey string)) {
 	r.mu.Unlock()
 }
 
-// SetUpstreamProxy 切换上游代理 URL。
-// transport.Proxy 是闭包，下次请求自动读到新值；同时关闭旧 idle 连接
-// 防 HTTP/2 复用旧出口 IP（与 MitmProxy.SetUpstreamProxy 行为对齐）。
-// proxyURL=="" → 直连。值未变化则跳过。
+// SetUpstreamProxy 运行时切换出站代理 URL。下次 Start / rebuildUpstreamTransport 时生效。
 func (r *OpenAIRelay) SetUpstreamProxy(proxyURL string) {
-	proxyURL = strings.TrimSpace(proxyURL)
 	r.mu.Lock()
-	changed := r.proxyURL != proxyURL
-	r.proxyURL = proxyURL
-	base := r.upstreamBase
-	r.mu.Unlock()
-	if !changed {
-		return
-	}
-	if proxyURL == "" {
-		r.log("上游代理: <direct>")
-	} else {
-		r.log("上游代理: %s", proxyURL)
-	}
-	if base != nil {
-		base.CloseIdleConnections()
-	}
+	defer r.mu.Unlock()
+	r.proxyURL = strings.TrimSpace(proxyURL)
 }
 
 type OpenAIRelayStatus struct {
@@ -105,7 +87,6 @@ func (r *OpenAIRelay) Start(port int, secret string) error {
 	// 构建持久 h2 transport（连接池复用）
 	t := r.buildUpstreamTransport()
 	r.upstream = t
-	r.upstreamBase = t
 
 	mux := http.NewServeMux()
 	// OpenAI 兼容
@@ -428,9 +409,6 @@ func (r *OpenAIRelay) handleChatCompletions(w http.ResponseWriter, req *http.Req
 }
 
 // buildUpstreamTransport 构建持久化 transport（与 MITM 上游一致，http.Transport + ForceAttemptHTTP2）
-//
-// t.Proxy 是闭包：每次请求重新读 r.proxyURL，运行时 SetUpstreamProxy 即时生效
-// 不需要重建 transport（避免 GC 压力 + in-flight 请求被 abort）。
 func (r *OpenAIRelay) buildUpstreamTransport() *http.Transport {
 	t := &http.Transport{
 		TLSClientConfig: &tls.Config{
@@ -444,20 +422,17 @@ func (r *OpenAIRelay) buildUpstreamTransport() *http.Transport {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 120 * time.Second,
 	}
-	t.Proxy = func(*http.Request) (*url.URL, error) {
-		r.mu.RLock()
-		raw := r.proxyURL
-		r.mu.RUnlock()
-		if raw == "" {
-			return nil, nil
+	if r.proxyURL != "" {
+		if u, err := url.Parse(r.proxyURL); err == nil {
+			t.Proxy = http.ProxyURL(u)
+			r.log("出站代理: %s", r.proxyURL)
 		}
-		return url.Parse(raw)
 	}
 	// 显式配置 HTTP/2（gRPC 必须 h2）
 	if err := http2.ConfigureTransport(t); err != nil {
 		r.log("http2.ConfigureTransport 失败: %v (回退 ForceAttemptHTTP2)", err)
 	}
-	r.log("transport built: ServerName=%s h2=explicit", GRPCUpstreamHost)
+	r.log("transport built: ServerName=%s h2=explicit proxy=%s", GRPCUpstreamHost, r.proxyURL)
 	return t
 }
 
@@ -477,13 +452,11 @@ func isTransientRelayRoundTripError(err error) bool {
 }
 
 // rebuildUpstreamTransport 完全重建 transport。
-// 仅在 lazy init 兜底（currentUpstreamTransport 取到 nil 时）使用。
-// 普通的代理切换 / transient 错误请用 base.CloseIdleConnections。
+// 仅在 lazy init 兜底（currentUpstreamTransport 取到 nil 时）或 transient 错误重试时使用。
 func (r *OpenAIRelay) rebuildUpstreamTransport() http.RoundTripper {
 	transport := r.buildUpstreamTransport()
 	r.mu.Lock()
 	r.upstream = transport
-	r.upstreamBase = transport
 	r.mu.Unlock()
 	return transport
 }
@@ -542,13 +515,8 @@ func (r *OpenAIRelay) sendGRPC(payload []byte, apiKey, jwt string) (*http.Respon
 		if !isTransientRelayRoundTripError(err) || attempt == 1 {
 			return nil, upstreamFailureNone, fmt.Errorf("grpc roundtrip to %s: %w", upIP, err)
 		}
-		r.log("sendGRPC transient error: %v; close idle conns and retry", err)
-		r.mu.RLock()
-		base := r.upstreamBase
-		r.mu.RUnlock()
-		if base != nil {
-			base.CloseIdleConnections()
-		}
+		r.log("sendGRPC transient error: %v; rebuild transport and retry", err)
+		r.rebuildUpstreamTransport()
 	}
 
 	grpcStatus := resp.Header.Get("grpc-status")

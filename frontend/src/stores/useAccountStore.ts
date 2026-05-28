@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { APIInfo } from "../api/wails";
 import { models } from "../../wailsjs/go/models";
 
@@ -259,18 +259,44 @@ export const useProviderAccountStore = defineStore("providerAccount", () => {
     }
   };
 
+  // 阶段 3: 当前全局唯一激活卡 (activated=true && status!=disabled && 配置完整)
+  const activeAccount = computed<ProviderAccountModel | null>(() => {
+    const found = accounts.value.find((a) =>
+      a.activated === true &&
+      String(a.status || "active") !== "disabled" &&
+      Boolean(String(a.base_url || "").trim()) &&
+      Boolean(String(a.auth_token || "").trim())
+    );
+    return found ?? null;
+  });
+
+  // 阶段 3: 「下一席位」— 同 active_model 候选里翻到下一张, 失败抛 error
+  // 错误 msg 可能为 "no_candidates" / "only_one"
+  const next = async (): Promise<ProviderAccountModel> => {
+    actionLoading.value = true;
+    try {
+      const next = (await APIInfo.nextActiveAccount()) as ProviderAccountModel;
+      await fetchAccounts(true);
+      return next;
+    } finally {
+      actionLoading.value = false;
+    }
+  };
+
   return {
     accounts,
     isLoading,
     isRefreshing,
     hasLoadedOnce,
     actionLoading,
+    activeAccount,
     fetchAccounts,
     ensureAccountsLoaded,
     deleteAccount,
     importBatch,
     updateAccount,
     refreshModels,
+    next,
   };
 });
 
